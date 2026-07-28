@@ -1,0 +1,120 @@
+# Error Handling
+
+The Hyrefast API uses a consistent response envelope for both success and error responses. Understanding this structure is critical for robust integrations.
+
+---
+
+## Response Envelope
+
+Every response — success or failure — shares the same JSON shape:
+
+```json
+{
+  "status": "SUCCESS",
+  "message": "Your request is successfully executed",
+  "data": { ... }
+}
+```
+
+| Field | Description |
+|---|---|
+| `status` | A string indicating the outcome. **Always check this, not just the HTTP status code.** |
+| `message` | Human-readable description of the result. |
+| `data` | The response payload on success. `null` on error or not-found. |
+
+## ⚠️ RECORD_NOT_FOUND is HTTP 200
+
+A "not found" result is returned as **`HTTP 200`** with `"status": "RECORD_NOT_FOUND"`:
+
+```json
+{
+  "status": "RECORD_NOT_FOUND",
+  "message": "Job not found",
+  "data": null
+}
+```
+
+This is **not** an HTTP-level error. Always check the `status` field in the body:
+
+```python
+response = requests.post(...)
+body = response.json()
+
+if body["status"] == "SUCCESS":
+    data = body["data"]
+elif body["status"] == "RECORD_NOT_FOUND":
+    print(f"Resource not found: {body['message']}")
+elif body["status"] == "VALIDATION_ERROR":
+    print(f"Validation failed: {body['message']}")
+```
+
+## Error Codes
+
+| HTTP Status | `status` value | Meaning |
+|---|---|---|
+| `200` | `SUCCESS` | Request succeeded |
+| `200` | `RECORD_NOT_FOUND` | Referenced resource doesn't exist or isn't in your workspace |
+| `422` | `VALIDATION_ERROR` | Request body failed validation — check `message` for the failing field(s) |
+| `401` | `UNAUTHORIZED` | Missing, invalid, revoked, or expired API key |
+| `429` | — | Rate limit exceeded |
+| `500` | `INTERNAL_SERVER_ERROR` | Unexpected server error; no stack trace exposed |
+
+## Error Response Shape
+
+```json
+{
+  "status": "VALIDATION_ERROR",
+  "message": "jobId is required",
+  "data": null
+}
+```
+
+## Handling Errors by Status
+
+```javascript
+async function handleResponse(response) {
+  const body = await response.json();
+
+  switch (body.status) {
+    case 'SUCCESS':
+      return body.data;
+
+    case 'RECORD_NOT_FOUND':
+      // Resource doesn't exist or isn't in your workspace
+      throw new NotFoundError(body.message);
+
+    case 'VALIDATION_ERROR':
+      // Check body.message for which fields failed
+      throw new ValidationError(body.message);
+
+    case 'UNAUTHORIZED':
+      // API key is missing, invalid, or expired
+      throw new AuthError(body.message);
+
+    default:
+      // Rate limit (429) or server error (500)
+      throw new ApiError(body.message || 'Unexpected error', response.status);
+  }
+}
+```
+
+## Validation Errors (422)
+
+Validation errors include the failing field(s) in the `message`:
+
+```json
+{
+  "status": "VALIDATION_ERROR",
+  "message": "candidateEmail must be a valid email address",
+  "data": null
+}
+```
+
+Common validation errors:
+
+| Endpoint | Common Validation Failures |
+|---|---|
+| Create Job | Missing `title`, invalid `job_type` |
+| Create Application | Missing `jobId` or `candidateEmail`, invalid email format |
+| Send Interview | Invalid or non-existent `applicationId` |
+| Copy Interview Link | Invalid or non-existent `applicationId` |

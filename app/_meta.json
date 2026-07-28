@@ -1,0 +1,45 @@
+{
+  "index": {
+    "title": "Introduction",
+    "type": "page",
+    "display": "normal"
+  },
+  "quickstart": {
+    "title": "Quickstart",
+    "type": "page",
+    "display": "normal"
+  },
+  "guides": {
+    "title": "Guides",
+    "type": "menu",
+    "items": {
+      "authentication": {
+        "title": "Authentication",
+        "type": "page",
+        "display": "normal"
+      },
+      "rate-limits": {
+        "title": "Rate Limits",
+        "type": "page",
+        "display": "normal"
+      },
+      "error-handling": {
+        "title": "Error Handling",
+        "type": "page",
+        "display": "normal"
+      },
+      "best-practices": {
+        "title": "Best Practices",
+        "type": "page",
+        "display": "normal"
+      }
+    }
+  },
+  "reference": {
+    "title": "API Reference",
+    "type": "page",
+    "display": "normal",
+    "href": "/reference",
+    "theme": "raw"
+  }
+}

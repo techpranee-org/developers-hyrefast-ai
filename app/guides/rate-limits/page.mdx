@@ -1,0 +1,84 @@
+# Rate Limits
+
+The Hyrefast API enforces rate limits to ensure fair usage across all integrations.
+
+---
+
+## Limit
+
+| Limit | Keyed by |
+|---|---|
+| 60 requests / 10 minutes | Your `X-API-Key` value |
+
+Exceeding this limit returns `429 Too Many Requests`.
+
+## Rate Limit Headers
+
+Rate-limit headers are included on every response so you can back off proactively:
+
+| Header | Description |
+|---|---|
+| `RateLimit-Limit` | The maximum number of requests allowed in the window |
+| `RateLimit-Remaining` | Requests remaining in the current window |
+| `RateLimit-Reset` | Seconds until the window resets |
+
+## Handling 429 Responses
+
+```json
+{
+  "status": "RATE_LIMIT_EXCEEDED",
+  "message": "Too many requests",
+  "data": null
+}
+```
+
+### Exponential Backoff
+
+When you receive a `429`, implement exponential backoff:
+
+```python
+import time
+import requests
+
+def api_call_with_retry(url, headers, json_body, max_retries=5):
+    for attempt in range(max_retries):
+        response = requests.post(url, headers=headers, json=json_body)
+        if response.status_code != 429:
+            return response
+
+        # Get reset time from headers, or use exponential backoff
+        reset = response.headers.get("RateLimit-Reset", 60)
+        wait = min(reset, 2 ** attempt)
+        print(f"Rate limited, waiting {wait}s before retry {attempt + 1}")
+        time.sleep(wait)
+
+    raise Exception(f"Max retries ({max_retries}) exceeded")
+```
+
+```javascript
+async function apiCallWithRetry(url, headers, body, maxRetries = 5) {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    if (response.status !== 429) return response;
+
+    const reset = parseInt(response.headers.get('RateLimit-Reset') || '60', 10);
+    const wait = Math.min(reset, 2 ** attempt);
+    console.log(`Rate limited, waiting ${wait}s before retry ${attempt + 1}`);
+    await new Promise(resolve => setTimeout(resolve, wait * 1000));
+  }
+
+  throw new Error(`Max retries (${maxRetries}) exceeded`);
+}
+```
+
+## Best Practices
+
+- **Monitor the `RateLimit-Remaining` header** and slow down before hitting the limit.
+- **Batch operations** where possible rather than making many rapid requests.
+- **Cache job IDs and application IDs** to avoid redundant lookups.
+- **Use webhooks** (coming soon) instead of polling for status updates.

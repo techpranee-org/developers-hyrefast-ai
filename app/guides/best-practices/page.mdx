@@ -1,0 +1,101 @@
+# Best Practices
+
+Production-tested recommendations for integrating the Hyrefast API.
+
+---
+
+## Check the `status` Field, Not Just HTTP Codes
+
+`RECORD_NOT_FOUND` is returned as `HTTP 200`. Always parse the response body:
+
+```python
+body = response.json()
+if body["status"] != "SUCCESS":
+    # Handle the error — don't rely on response.status_code alone
+    handle_error(body)
+```
+
+## Treat Your API Key as a Secret
+
+- Store it in a **secrets manager** or **environment variable** — never in source control.
+- **Never** embed it in client-side code (React, Vue, mobile apps).
+- If exposed, **revoke immediately** from the dashboard and generate a new key.
+- Log the response body (`status` + `message`) for failures, but **never log the API key**.
+
+## Validate IDs Before Use
+
+`jobId` and `applicationId` must belong to your own workspace. Requests referencing other workspaces' resources return `RECORD_NOT_FOUND` (HTTP 200).
+
+```javascript
+// Always verify the status after creating a resource
+const { data, status } = await response.json();
+
+if (status === 'SUCCESS' && data?.id) {
+  const jobId = data.id; // Safe to use in subsequent calls
+} else {
+  // Handle the error — don't proceed with an invalid ID
+}
+```
+
+## Choose the Right Interview Delivery Method
+
+| Method | When to use |
+|---|---|
+| `send-interview` | You want Hyrefast to email the candidate directly |
+| `interview-link` | You want to deliver the link through your own notification system (SMS, in-app, custom email) |
+
+```bash
+# Option A: Let Hyrefast send the email
+curl -X POST ".../applications/{id}/send-interview" -H "X-API-Key: ..."
+
+# Option B: Get the link and deliver it yourself
+curl -X POST ".../applications/{id}/interview-link" -H "X-API-Key: ..."
+# -> data.interviewLink = "https://hyrefast.ai/interview/..."
+```
+
+## Handle Rate Limits Proactively
+
+- Monitor `RateLimit-Remaining` headers.
+- Implement **exponential backoff** on `429` responses.
+- Batch operations where possible.
+- See the [Rate Limits guide](/guides/rate-limits) for backoff code examples.
+
+## Log Failed Requests
+
+When contacting support, include:
+
+1. **Endpoint** (e.g., `POST /client/api/v1/external/jobs`)
+2. **Timestamp**
+3. **Full response body** (`status` + `message`)
+
+This is enough for the support team to locate the request server-side — **without sharing your API key**.
+
+## End-to-End Integration Flow
+
+```bash
+# 1. Create a job
+curl -X POST ".../external/jobs" -H "X-API-Key: ..." -d '{ "title": "..." }'
+# -> data.id = JOB_ID
+
+# 2. Submit a candidate application
+curl -X POST ".../external/applications" -H "X-API-Key: ..." -d '{ "jobId": "JOB_ID", "candidateEmail": "..." }'
+# -> data.id = APPLICATION_ID
+
+# 3. Send the interview invitation
+curl -X POST ".../external/applications/APPLICATION_ID/send-interview" -H "X-API-Key: ..."
+
+# Or: retrieve the link to deliver it yourself
+curl -X POST ".../external/applications/APPLICATION_ID/interview-link" -H "X-API-Key: ..."
+# -> data.interviewLink = "https://hyrefast.ai/interview/..."
+```
+
+## Test in Staging First
+
+Use `https://staging-api.hyrefast.ai` for development and testing before pointing your integration to production:
+
+```
+Staging:   https://staging-api.hyrefast.ai
+Production: https://api.hyrefast.ai
+```
+
+You can switch between environments in the [API Reference](/reference) using the server dropdown.

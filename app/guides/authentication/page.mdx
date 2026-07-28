@@ -1,0 +1,62 @@
+# Authentication
+
+The Hyrefast API uses a single API key per workspace for authentication.
+
+---
+
+## API Key Header
+
+Every request must include your API key in the `X-API-Key` header:
+
+```
+X-API-Key: YOUR_API_KEY
+```
+
+Requests without this header, or with an invalid, revoked, or expired key, receive `401 Unauthorized`:
+
+```json
+{
+  "status": "UNAUTHORIZED",
+  "message": "Missing, invalid, revoked, or expired API key",
+  "data": null
+}
+```
+
+## Generating an API Key
+
+1. Log in to the [Hyrefast dashboard](https://hyrefast.ai).
+2. Navigate to **Settings → API Keys → Generate API Key**.
+3. Copy the raw key immediately — **it's shown only once**.
+4. Store it securely (environment variable, secrets manager, etc.).
+
+## Workspace Scoping
+
+Your API key is scoped to a single workspace. Every resource you create or read through the API is confined to that workspace:
+
+- Jobs you create are in your workspace.
+- Applications you submit are against jobs in your workspace.
+- Requests referencing other workspaces' resources return `RECORD_NOT_FOUND`.
+
+## Request Headers
+
+| Header | Required | Description |
+|---|---|---|
+| `X-API-Key` | Yes | Your workspace API key |
+| `Content-Type` | Yes (on requests with a body) | `application/json` |
+| `Accept` | No | `application/json` (default) |
+
+## Security Best Practices
+
+- **Treat your API key like a password.** Store it in a secrets manager or environment variable.
+- **Never expose it in client-side code**, source control, or logs.
+- **If exposed, revoke it immediately** and generate a new key from the dashboard.
+- **Use server-to-server calls.** The API is designed for backend integrations, not browser-side requests.
+
+## Testing with the API Reference
+
+You can test authenticated requests directly in the [API Reference](/reference):
+
+1. Open the [API Reference](/reference).
+2. Click the **Authentication** panel.
+3. Paste your `X-API-Key` value.
+4. The key persists in your browser for all subsequent requests — no need to re-enter it per endpoint.

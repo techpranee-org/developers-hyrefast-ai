@@ -1,0 +1,63 @@
+# Hyrefast API
+
+Integrate Hyrefast into your platform — create jobs, submit candidate applications, and manage interview invitations programmatically.
+
+---
+
+## What You Can Do
+
+The Hyrefast API lets your application create jobs, submit candidate applications, and manage interview invitations inside your Hyrefast workspace — without using the Hyrefast dashboard.
+
+It's designed for **server-to-server integrations**: ATS platforms, career sites, and recruiting tools that need to push jobs and candidates into Hyrefast and trigger interview delivery.
+
+## Base URL
+
+```
+https://api.hyrefast.ai
+```
+
+A staging environment is also available for testing:
+
+```
+https://staging-api.hyrefast.ai
+```
+
+## Authentication
+
+Every request must include your API key in the `X-API-Key` header:
+
+```
+X-API-Key: YOUR_API_KEY
+```
+
+Generate an API key from the Hyrefast dashboard under **Settings → API Keys → Generate API Key**.
+
+> ⚠️ Your API key is shown only once at creation — store it securely. Treat it like a password.
+
+## Quick Links
+
+- **[Quickstart Guide](/quickstart)** — Make your first API call in 5 minutes
+- **[API Reference](/reference)** — Interactive endpoint documentation with live testing
+- **[Authentication](/guides/authentication)** — API key setup and security
+- **[Rate Limits](/guides/rate-limits)** — Understanding rate limiting and backoff
+- **[Error Handling](/guides/error-handling)** — Response envelopes and error codes
+- **[Best Practices](/guides/best-practices)** — Production integration tips
+
+## Response Format
+
+All responses share a consistent JSON envelope:
+
+```json
+{
+  "status": "SUCCESS",
+  "message": "Your request is successfully executed",
+  "data": { ... }
+}
+```
+
+> **Important:** A "not found" result is returned as `HTTP 200` with `"status": "RECORD_NOT_FOUND"`. Always check the `status` field in the body, not just the HTTP status code.
+
+## Support
+
+- **Integration questions:** support@hyrefast.ai
+- **Interactive testing:** [API Reference →](/reference)

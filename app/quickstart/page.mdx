@@ -1,0 +1,75 @@
+# Quickstart
+
+Make your first Hyrefast API call in under 5 minutes.
+
+---
+
+## 1. Get Your API Key
+
+1. Sign up and create a workspace at the [Hyrefast dashboard](https://hyrefast.ai).
+2. Navigate to **Settings → API Keys → Generate API Key**.
+3. Copy and securely store the raw key — it's shown only once.
+
+## 2. Make Your First Request
+
+Create a job in your workspace:
+
+```bash
+curl -X POST "https://api.hyrefast.ai/client/api/v1/external/jobs" \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Senior Python Developer",
+    "description": "We are looking for an experienced Python developer.",
+    "skills": ["Python", "Django", "PostgreSQL"],
+    "job_type": "full_time",
+    "location": "Bangalore, India"
+  }'
+```
+
+You'll receive a response like:
+
+```json
+{
+  "status": "SUCCESS",
+  "message": "Your request is successfully executed",
+  "data": {
+    "id": "job_abc123",
+    "title": "Senior Python Developer",
+    "status": "active",
+    "created_at": "2026-08-01T10:00:00Z"
+  }
+}
+```
+
+## 3. Submit a Candidate Application
+
+Use the `job_id` from the previous step to submit a candidate:
+
+```bash
+curl -X POST "https://api.hyrefast.ai/client/api/v1/external/applications" \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jobId": "job_abc123",
+    "candidateEmail": "john@example.com",
+    "candidateName": "John Doe",
+    "sendInterviewLink": true
+  }'
+```
+
+## 4. Try It in the API Reference
+
+The fastest way to explore the API is with the interactive [API Reference](/reference):
+
+1. Open the [API Reference](/reference) page.
+2. Click the **Authentication** panel and paste your `X-API-Key`.
+3. Select your environment (Production or Staging) from the server dropdown.
+4. Browse any endpoint, fill in the parameters, and click **Send**.
+5. The response appears inline — no Postman or curl needed.
+
+## Next Steps
+
+- **[Authentication Guide](/guides/authentication)** — Security best practices for your API key
+- **[Error Handling](/guides/error-handling)** — Understanding response status codes
+- **[API Reference](/reference)** — Full interactive endpoint documentation

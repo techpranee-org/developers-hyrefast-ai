@@ -1,0 +1,720 @@
+openapi: 3.1.0
+info:
+  title: Hyrefast API
+  version: 1.0.0
+  summary: Integration API for external clients to create jobs, submit candidate applications, and manage interview invitations in Hyrefast.
+  description: |
+    The Hyrefast API lets your application create jobs, submit candidate applications, and manage interview
+    invitations inside your Hyrefast workspace programmatically — without using the Hyrefast dashboard.
+
+    It's designed for server-to-server integrations: ATS platforms, career sites, and recruiting tools
+    that need to push jobs and candidates into Hyrefast and trigger interview delivery.
+
+    All requests are authenticated with a single API key and return a consistent JSON response envelope.
+  contact:
+    name: Hyrefast Support
+    email: support@hyrefast.ai
+    url: https://hyrefast.ai
+  license:
+    name: Proprietary
+    url: https://hyrefast.ai/terms
+
+servers:
+  - url: https://api.hyrefast.ai
+    description: Production
+  - url: https://staging-api.hyrefast.ai
+    description: Staging — use for testing your integration before going live
+
+# ─────────────────────────────────────────────
+# Security
+# ─────────────────────────────────────────────
+security:
+  - ApiKeyAuth: []
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Your workspace API key. Generate one from the Hyrefast dashboard under Settings → API Keys → Generate API Key.
+
+  # ─────────────────────────────────────────────
+  # Reusable parameters
+  # ─────────────────────────────────────────────
+  parameters:
+    ApplicationId:
+      name: applicationId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: ID of an application belonging to your workspace.
+      example: app_xyz789
+
+  # ─────────────────────────────────────────────
+  # Response envelope schemas
+  # ─────────────────────────────────────────────
+  schemas:
+    SuccessEnvelope:
+      type: object
+      required: [status, message, data]
+      properties:
+        status:
+          type: string
+          example: SUCCESS
+          description: Always `"SUCCESS"` on a successful request.
+        message:
+          type: string
+          example: Your request is successfully executed
+        data:
+          description: The response payload. `null` when the resource is not found.
+          nullable: true
+
+    RecordNotFoundEnvelope:
+      type: object
+      required: [status, message, data]
+      properties:
+        status:
+          type: string
+          example: RECORD_NOT_FOUND
+          description: |
+            Returned as `HTTP 200` — the referenced resource doesn't exist or isn't in your workspace.
+            Always check the `status` field in the body, not just the HTTP status code.
+        message:
+          type: string
+          example: Application not found
+        data:
+          nullable: true
+          example: null
+
+    ValidationErrorEnvelope:
+      type: object
+      required: [status, message, data]
+      properties:
+        status:
+          type: string
+          example: VALIDATION_ERROR
+        message:
+          type: string
+          example: jobId is required
+        data:
+          nullable: true
+          example: null
+
+    UnauthorizedEnvelope:
+      type: object
+      required: [status, message, data]
+      properties:
+        status:
+          type: string
+          example: UNAUTHORIZED
+        message:
+          type: string
+          example: Missing, invalid, revoked, or expired API key
+        data:
+          nullable: true
+          example: null
+
+    RateLimitEnvelope:
+      type: object
+      required: [status, message, data]
+      properties:
+        status:
+          type: string
+          example: RATE_LIMIT_EXCEEDED
+        message:
+          type: string
+          example: Too many requests
+        data:
+          nullable: true
+          example: null
+
+    # ── Request bodies ──────────────────────────
+
+    CreateJobRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          description: Job title.
+          example: Senior Python Developer
+        description:
+          type: string
+          description: Job description / requirements.
+          example: We are looking for an experienced Python developer with strong backend skills.
+        skills:
+          type: array
+          items:
+            type: string
+          description: Required skills for the job.
+          example: [Python, Django, PostgreSQL]
+        experience_range:
+          type: object
+          properties:
+            min_years:
+              type: integer
+              example: 3
+            max_years:
+              type: integer
+              example: 7
+        location:
+          type: string
+          example: Bangalore, India
+        job_type:
+          type: string
+          enum: [full_time, part_time, contract, internship]
+          example: full_time
+        interview_config:
+          type: object
+          properties:
+            interview_type:
+              type: string
+              enum: [standard, agent, voice_agent]
+              description: |
+                Which interview engine runs:
+                - `standard` — pre-set questions with follow-ups
+                - `agent` — AI agent conducts the interview adaptively
+                - `voice_agent` — voice-based conversational interview
+              example: standard
+            duration_minutes:
+              type: integer
+              example: 30
+            follow_up_questions:
+              type: boolean
+              example: true
+            proctoring_enabled:
+              type: boolean
+              example: true
+            gaze_tracking:
+              type: boolean
+              example: true
+
+    CreateApplicationRequest:
+      type: object
+      required: [jobId, candidateEmail]
+      properties:
+        jobId:
+          type: string
+          description: ID of a job in your workspace.
+          example: job_abc123
+        candidateEmail:
+          type: string
+          format: email
+          description: Used to find or create the candidate.
+          example: john@example.com
+        candidateName:
+          type: string
+          description: Defaults from the email if omitted.
+          example: John Doe
+        candidatePhone:
+          type: string
+          example: "+919876543210"
+        resume:
+          type: string
+          description: Resume URL or reference.
+          example: https://example.com/resume.pdf
+        sendInterviewLink:
+          type: boolean
+          description: If `true`, emails the candidate their private interview link immediately.
+          example: true
+
+    # ── Response data schemas ───────────────────
+
+    JobData:
+      type: object
+      properties:
+        id:
+          type: string
+          example: job_abc123
+        title:
+          type: string
+          example: Senior Python Developer
+        status:
+          type: string
+          enum: [active, closed, draft]
+          example: active
+        created_at:
+          type: string
+          format: date-time
+          example: 2026-08-01T10:00:00Z
+
+    ApplicationData:
+      type: object
+      properties:
+        id:
+          type: string
+          example: app_xyz789
+        jobId:
+          type: string
+          example: job_abc123
+        candidate:
+          type: object
+          properties:
+            name:
+              type: string
+              example: John Doe
+            email:
+              type: string
+              format: email
+              example: john@example.com
+        status:
+          type: string
+          example: created
+        created_at:
+          type: string
+          format: date-time
+          example: 2026-08-01T10:05:00Z
+
+    InterviewInvitationData:
+      type: object
+      properties:
+        interviewId:
+          type: string
+          example: ivw_def456
+        applicationId:
+          type: string
+          example: app_xyz789
+        status:
+          type: string
+          example: sent
+        created_at:
+          type: string
+          format: date-time
+          example: 2026-08-01T10:10:00Z
+
+    InterviewLinkData:
+      type: object
+      properties:
+        interviewLink:
+          type: string
+          description: The candidate's private interview link.
+          example: https://hyrefast.ai/interview/ivw_def456?token=abc123
+
+  # ─────────────────────────────────────────────
+  # Reusable responses
+  # ─────────────────────────────────────────────
+  responses:
+    Unauthorized:
+      description: Missing, invalid, revoked, or expired API key.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UnauthorizedEnvelope'
+    RateLimited:
+      description: Rate limit exceeded (60 requests / 10 minutes per API key).
+      headers:
+        RateLimit-Limit:
+          schema:
+            type: integer
+            example: 60
+        RateLimit-Remaining:
+          schema:
+            type: integer
+            example: 0
+        RateLimit-Reset:
+          schema:
+            type: integer
+            example: 600
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RateLimitEnvelope'
+    InternalServerError:
+      description: Unexpected server error; no stack trace is exposed.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status:
+                type: string
+                example: INTERNAL_SERVER_ERROR
+              message:
+                type: string
+              data:
+                nullable: true
+                example: null
+
+# ─────────────────────────────────────────────
+# Tags
+# ─────────────────────────────────────────────
+tags:
+  - name: Jobs
+    description: Create and manage job postings in your workspace.
+  - name: Applications
+    description: Submit candidate applications against existing jobs.
+  - name: Interviews
+    description: Send or retrieve interview invitation links.
+
+# ─────────────────────────────────────────────
+# Paths
+# ─────────────────────────────────────────────
+paths:
+  # ── 1. Create Job ────────────────────────────
+  /client/api/v1/external/jobs:
+    post:
+      operationId: createJob
+      tags: [Jobs]
+      summary: Create a job
+      description: Creates a new job in the workspace associated with your API key.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateJobRequest'
+            examples:
+              full_example:
+                summary: Full example with interview config
+                value:
+                  title: Senior Python Developer
+                  description: We are looking for an experienced Python developer with strong backend skills.
+                  skills: [Python, Django, PostgreSQL]
+                  experience_range:
+                    min_years: 3
+                    max_years: 7
+                  location: Bangalore, India
+                  job_type: full_time
+                  interview_config:
+                    interview_type: standard
+                    duration_minutes: 30
+                    follow_up_questions: true
+                    proctoring_enabled: true
+                    gaze_tracking: true
+      responses:
+        '200':
+          description: Job created successfully.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/JobData'
+              examples:
+                success:
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      id: job_abc123
+                      title: Senior Python Developer
+                      status: active
+                      created_at: 2026-08-01T10:00:00Z
+        '422':
+          description: Validation error — missing or invalid job fields.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X POST "https://api.hyrefast.ai/client/api/v1/external/jobs" \
+              -H "X-API-Key: YOUR_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "title": "Senior Python Developer",
+                "description": "We are looking for...",
+                "skills": ["Python", "Django", "PostgreSQL"],
+                "job_type": "full_time",
+                "location": "Bangalore, India"
+              }'
+        - lang: JavaScript
+          source: |
+            const response = await fetch(`${BASE_URL}/client/api/v1/external/jobs`, {
+              method: 'POST',
+              headers: {
+                'X-API-Key': API_KEY,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                title: 'Senior Python Developer',
+                description: 'We are looking for...',
+                skills: ['Python', 'Django', 'PostgreSQL'],
+                job_type: 'full_time',
+                location: 'Bangalore, India',
+              }),
+            });
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.post(
+                f"{BASE_URL}/client/api/v1/external/jobs",
+                headers={"X-API-Key": API_KEY},
+                json={
+                    "title": "Senior Python Developer",
+                    "description": "We are looking for...",
+                    "skills": ["Python", "Django", "PostgreSQL"],
+                    "job_type": "full_time",
+                    "location": "Bangalore, India",
+                },
+            )
+            data = response.json()["data"]
+
+  # ── 2. Create Application ────────────────────
+  /client/api/v1/external/applications:
+    post:
+      operationId: createApplication
+      tags: [Applications]
+      summary: Create an application
+      description: |
+        Creates an application for a job in your workspace, finding or creating the candidate by email.
+        Optionally, the candidate can be emailed their private interview link in the same call.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateApplicationRequest'
+            examples:
+              send_interview:
+                summary: Apply candidate and send interview link
+                value:
+                  jobId: job_abc123
+                  candidateEmail: john@example.com
+                  candidateName: John Doe
+                  candidatePhone: "+919876543210"
+                  sendInterviewLink: true
+              minimal:
+                summary: Minimal — just the required fields
+                value:
+                  jobId: job_abc123
+                  candidateEmail: john@example.com
+      responses:
+        '200':
+          description: Application created successfully.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ApplicationData'
+              examples:
+                success:
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      id: app_xyz789
+                      jobId: job_abc123
+                      candidate:
+                        name: John Doe
+                        email: john@example.com
+                      status: created
+                      created_at: 2026-08-01T10:05:00Z
+                record_not_found:
+                  summary: jobId not found in your workspace
+                  value:
+                    status: RECORD_NOT_FOUND
+                    message: Job not found
+                    data: null
+        '422':
+          description: Validation error — missing or invalid `jobId` or `candidateEmail`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X POST "https://api.hyrefast.ai/client/api/v1/external/applications" \
+              -H "X-API-Key: YOUR_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "jobId": "job_abc123",
+                "candidateEmail": "john@example.com",
+                "candidateName": "John Doe",
+                "sendInterviewLink": true
+              }'
+        - lang: JavaScript
+          source: |
+            const response = await fetch(`${BASE_URL}/client/api/v1/external/applications`, {
+              method: 'POST',
+              headers: {
+                'X-API-Key': API_KEY,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                jobId: JOB_ID,
+                candidateEmail: CANDIDATE_EMAIL,
+                candidateName: CANDIDATE_NAME,
+                sendInterviewLink: true,
+              }),
+            });
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.post(
+                f"{BASE_URL}/client/api/v1/external/applications",
+                headers={"X-API-Key": API_KEY},
+                json={
+                    "jobId": JOB_ID,
+                    "candidateEmail": CANDIDATE_EMAIL,
+                    "candidateName": CANDIDATE_NAME,
+                    "sendInterviewLink": True,
+                },
+            )
+            data = response.json()["data"]
+
+  # ── 3. Send Interview Invitation ─────────────
+  /client/api/v1/external/applications/{applicationId}/send-interview:
+    post:
+      operationId: sendInterviewInvitation
+      tags: [Interviews]
+      summary: Send interview invitation
+      description: Sends (or re-sends) the interview invitation email for an application in your workspace.
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+      responses:
+        '200':
+          description: Interview invitation sent successfully.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/InterviewInvitationData'
+              examples:
+                success:
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      interviewId: ivw_def456
+                      applicationId: app_xyz789
+                      status: sent
+                      created_at: 2026-08-01T10:10:00Z
+                record_not_found:
+                  summary: applicationId not found in your workspace
+                  value:
+                    status: RECORD_NOT_FOUND
+                    message: Application not found
+                    data: null
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X POST "https://api.hyrefast.ai/client/api/v1/external/applications/app_xyz789/send-interview" \
+              -H "X-API-Key: YOUR_API_KEY" \
+              -H "Content-Type: application/json"
+        - lang: JavaScript
+          source: |
+            const response = await fetch(
+              `${BASE_URL}/client/api/v1/external/applications/${APPLICATION_ID}/send-interview`,
+              {
+                method: 'POST',
+                headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+              },
+            );
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.post(
+                f"{BASE_URL}/client/api/v1/external/applications/{APPLICATION_ID}/send-interview",
+                headers={"X-API-Key": API_KEY},
+            )
+            data = response.json()["data"]
+
+  # ── 4. Copy Interview Link ───────────────────
+  /client/api/v1/external/applications/{applicationId}/interview-link:
+    post:
+      operationId: copyInterviewLink
+      tags: [Interviews]
+      summary: Copy interview link
+      description: |
+        Retrieves the private interview link for an application in your workspace **without** emailing it.
+        Useful when you want to deliver it through your own notification channel (e.g. your own email
+        templates, SMS, or an in-app message).
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+      responses:
+        '200':
+          description: Interview link retrieved successfully.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/InterviewLinkData'
+              examples:
+                success:
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      interviewLink: https://hyrefast.ai/interview/ivw_def456?token=abc123
+                record_not_found:
+                  summary: applicationId not found in your workspace
+                  value:
+                    status: RECORD_NOT_FOUND
+                    message: Application not found
+                    data: null
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X POST "https://api.hyrefast.ai/client/api/v1/external/applications/app_xyz789/interview-link" \
+              -H "X-API-Key: YOUR_API_KEY" \
+              -H "Content-Type: application/json"
+        - lang: JavaScript
+          source: |
+            const response = await fetch(
+              `${BASE_URL}/client/api/v1/external/applications/${APPLICATION_ID}/interview-link`,
+              {
+                method: 'POST',
+                headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+              },
+            );
+            const { data } = await response.json();
+            console.log(data.interviewLink);
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.post(
+                f"{BASE_URL}/client/api/v1/external/applications/{APPLICATION_ID}/interview-link",
+                headers={"X-API-Key": API_KEY},
+            )
+            print(response.json()["data"]["interviewLink"])
