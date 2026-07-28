@@ -10,13 +10,6 @@ export const metadata = {
   },
   description: 'Integrate Hyrefast into your platform — create jobs, submit applications, and manage interviews programmatically.',
   metadataBase: new URL('https://developers.hyrefast.ai'),
-  openGraph: {
-    title: 'Hyrefast API Documentation',
-    description: 'Integrate Hyrefast into your platform — create jobs, submit applications, and manage interviews programmatically.',
-    url: 'https://developers.hyrefast.ai',
-    siteName: 'Hyrefast API Documentation',
-    type: 'website',
-  },
 }
 
 const banner = (
@@ -61,7 +54,6 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           navbar={navbar}
           pageMap={await getPageMap()}
           docsRepositoryBase="https://github.com/techpranee-org/developers-hyrefast-ai"
-          editLink="Edit this page on GitHub"
           sidebar={{ defaultMenuCollapseLevel: 1 }}
           footer={footer}
         >
