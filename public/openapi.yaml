@@ -20,10 +20,10 @@ info:
     url: https://hyrefast.ai/terms
 
 servers:
-  - url: https://api.hyrefast.ai
-    description: Production
   - url: https://staging-api.hyrefast.ai
     description: Staging — use for testing your integration before going live
+  - url: https://api.hyrefast.ai
+    description: Production
 
 # ─────────────────────────────────────────────
 # Security
@@ -169,15 +169,19 @@ components:
         interview_config:
           type: object
           properties:
-            interview_type:
-              type: string
-              enum: [standard, agent, voice_agent]
-              description: |
-                Which interview engine runs:
-                - `standard` — pre-set questions with follow-ups
-                - `agent` — AI agent conducts the interview adaptively
-                - `voice_agent` — voice-based conversational interview
-              example: standard
+            # interview_type:
+            #   type: string
+            #   enum: [standard, agent, voice_agent]
+            #   description: |
+            #     Which interview engine runs:
+            #     - `standard` — pre-set questions with follow-ups
+            #     - `agent` — AI agent conducts the interview adaptively
+            #     - `voice_agent` — voice-based conversational interview
+            #   example: standard
+            conversational:
+              type: boolean
+              example: true
+              # description: Allows the candidate to choose a conversational interview mode (with follow-up questions) instead of a standard interview.
             duration_minutes:
               type: integer
               example: 30
@@ -210,7 +214,7 @@ components:
           example: John Doe
         candidatePhone:
           type: string
-          example: "+919876543210"
+          example: '+919876543210'
         resume:
           type: string
           description: Resume URL or reference.
@@ -378,11 +382,9 @@ paths:
                   location: Bangalore, India
                   job_type: full_time
                   interview_config:
-                    interview_type: standard
+                    # interview_type: standard
+                    conversational: true
                     duration_minutes: 30
-                    follow_up_questions: true
-                    proctoring_enabled: true
-                    gaze_tracking: true
       responses:
         '200':
           description: Job created successfully.
@@ -486,7 +488,7 @@ paths:
                   jobId: job_abc123
                   candidateEmail: john@example.com
                   candidateName: John Doe
-                  candidatePhone: "+919876543210"
+                  candidatePhone: '+919876543210'
                   sendInterviewLink: true
               minimal:
                 summary: Minimal — just the required fields
