@@ -20,8 +20,6 @@ info:
     url: https://hyrefast.ai/terms
 
 servers:
-  - url: http://localhost:6365
-    description: Local development server
   - url: https://staging-api.hyrefast.ai
     description: Staging — use for testing your integration before going live
   - url: https://api.hyrefast.ai
