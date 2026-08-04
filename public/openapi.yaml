@@ -20,6 +20,8 @@ info:
     url: https://hyrefast.ai/terms
 
 servers:
+  - url: http://localhost:6365
+    description: Local development server
   - url: https://staging-api.hyrefast.ai
     description: Staging — use for testing your integration before going live
   - url: https://api.hyrefast.ai
@@ -357,7 +359,7 @@ tags:
 # ─────────────────────────────────────────────
 paths:
   # ── 1. Create Job ────────────────────────────
-  /client/api/v1/external/jobs:
+  /external/api/v1/jobs:
     post:
       operationId: createJob
       tags: [Jobs]
@@ -422,7 +424,7 @@ paths:
       x-codeSamples:
         - lang: cURL
           source: |
-            curl -X POST "https://api.hyrefast.ai/client/api/v1/external/jobs" \
+            curl -X POST "https://api.hyrefast.ai/external/api/v1/jobs" \
               -H "X-API-Key: YOUR_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{
@@ -434,7 +436,7 @@ paths:
               }'
         - lang: JavaScript
           source: |
-            const response = await fetch(`${BASE_URL}/client/api/v1/external/jobs`, {
+            const response = await fetch(`${BASE_URL}/external/api/v1/jobs`, {
               method: 'POST',
               headers: {
                 'X-API-Key': API_KEY,
@@ -454,7 +456,7 @@ paths:
             import requests
 
             response = requests.post(
-                f"{BASE_URL}/client/api/v1/external/jobs",
+                f"{BASE_URL}/external/api/v1/jobs",
                 headers={"X-API-Key": API_KEY},
                 json={
                     "title": "Senior Python Developer",
@@ -467,7 +469,7 @@ paths:
             data = response.json()["data"]
 
   # ── 2. Create Application ────────────────────
-  /client/api/v1/external/applications:
+  /external/api/v1/applications:
     post:
       operationId: createApplication
       tags: [Applications]
@@ -541,7 +543,7 @@ paths:
       x-codeSamples:
         - lang: cURL
           source: |
-            curl -X POST "https://api.hyrefast.ai/client/api/v1/external/applications" \
+            curl -X POST "https://api.hyrefast.ai/external/api/v1/applications" \
               -H "X-API-Key: YOUR_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{
@@ -552,7 +554,7 @@ paths:
               }'
         - lang: JavaScript
           source: |
-            const response = await fetch(`${BASE_URL}/client/api/v1/external/applications`, {
+            const response = await fetch(`${BASE_URL}/external/api/v1/applications`, {
               method: 'POST',
               headers: {
                 'X-API-Key': API_KEY,
@@ -571,7 +573,7 @@ paths:
             import requests
 
             response = requests.post(
-                f"{BASE_URL}/client/api/v1/external/applications",
+                f"{BASE_URL}/external/api/v1/applications",
                 headers={"X-API-Key": API_KEY},
                 json={
                     "jobId": JOB_ID,
@@ -583,7 +585,7 @@ paths:
             data = response.json()["data"]
 
   # ── 3. Send Interview Invitation ─────────────
-  /client/api/v1/external/applications/{applicationId}/send-interview:
+  /external/api/v1/applications/{applicationId}/send-interview:
     post:
       operationId: sendInterviewInvitation
       tags: [Interviews]
@@ -628,13 +630,13 @@ paths:
       x-codeSamples:
         - lang: cURL
           source: |
-            curl -X POST "https://api.hyrefast.ai/client/api/v1/external/applications/app_xyz789/send-interview" \
+            curl -X POST "https://api.hyrefast.ai/external/api/v1/applications/app_xyz789/send-interview" \
               -H "X-API-Key: YOUR_API_KEY" \
               -H "Content-Type: application/json"
         - lang: JavaScript
           source: |
             const response = await fetch(
-              `${BASE_URL}/client/api/v1/external/applications/${APPLICATION_ID}/send-interview`,
+              `${BASE_URL}/external/api/v1/applications/${APPLICATION_ID}/send-interview`,
               {
                 method: 'POST',
                 headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
@@ -646,13 +648,13 @@ paths:
             import requests
 
             response = requests.post(
-                f"{BASE_URL}/client/api/v1/external/applications/{APPLICATION_ID}/send-interview",
+                f"{BASE_URL}/external/api/v1/applications/{APPLICATION_ID}/send-interview",
                 headers={"X-API-Key": API_KEY},
             )
             data = response.json()["data"]
 
   # ── 4. Copy Interview Link ───────────────────
-  /client/api/v1/external/applications/{applicationId}/interview-link:
+  /external/api/v1/applications/{applicationId}/interview-link:
     post:
       operationId: copyInterviewLink
       tags: [Interviews]
@@ -697,13 +699,13 @@ paths:
       x-codeSamples:
         - lang: cURL
           source: |
-            curl -X POST "https://api.hyrefast.ai/client/api/v1/external/applications/app_xyz789/interview-link" \
+            curl -X POST "https://api.hyrefast.ai/external/api/v1/applications/app_xyz789/interview-link" \
               -H "X-API-Key: YOUR_API_KEY" \
               -H "Content-Type: application/json"
         - lang: JavaScript
           source: |
             const response = await fetch(
-              `${BASE_URL}/client/api/v1/external/applications/${APPLICATION_ID}/interview-link`,
+              `${BASE_URL}/external/api/v1/applications/${APPLICATION_ID}/interview-link`,
               {
                 method: 'POST',
                 headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
@@ -716,7 +718,7 @@ paths:
             import requests
 
             response = requests.post(
-                f"{BASE_URL}/client/api/v1/external/applications/{APPLICATION_ID}/interview-link",
+                f"{BASE_URL}/external/api/v1/applications/{APPLICATION_ID}/interview-link",
                 headers={"X-API-Key": API_KEY},
             )
             print(response.json()["data"]["interviewLink"])
