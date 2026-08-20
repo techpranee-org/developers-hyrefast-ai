@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Hyrefast API
-  version: 1.0.0
+  version: 1.1.0
   summary: Integration API for external clients to create jobs, submit candidate applications, and manage interview invitations in Hyrefast.
   description: |
     The Hyrefast API lets your application create jobs, submit candidate applications, and manage interview
@@ -11,6 +11,11 @@ info:
     that need to push jobs and candidates into Hyrefast and trigger interview delivery.
 
     All requests are authenticated with a single API key and return a consistent JSON response envelope.
+
+    **v1.1 change:** `POST /jobs/create` now creates the job as a **draft** instead of publishing it
+    immediately. Add skills (`PUT /jobs/{jobId}/skills`), interview questions (`PUT /jobs/{jobId}/questions`),
+    and/or topic guidance (`PUT /jobs/{jobId}/topics`), then call `POST /jobs/{jobId}/publish` when the job
+    is ready to go live — publish validates the job has the required information first.
   contact:
     name: Hyrefast Support
     email: support@hyrefast.ai
@@ -20,6 +25,8 @@ info:
     url: https://hyrefast.ai/terms
 
 servers:
+  - url: http://localhost:6365
+    description: Localhost — use for testing your integration before going live
   - url: https://staging-api.hyrefast.ai
     description: Staging — use for testing your integration before going live
   - url: https://api.hyrefast.ai
@@ -43,6 +50,14 @@ components:
   # Reusable parameters
   # ─────────────────────────────────────────────
   parameters:
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: ID of a job belonging to your workspace.
+      example: job_abc123
     ApplicationId:
       name: applicationId
       in: path
@@ -51,6 +66,14 @@ components:
         type: string
       description: ID of an application belonging to your workspace.
       example: app_xyz789
+    WebhookId:
+      name: webhookId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: ID of the webhook registered for your workspace.
+      example: whk_qrs321
 
   # ─────────────────────────────────────────────
   # Response envelope schemas
@@ -68,8 +91,7 @@ components:
           type: string
           example: Your request is successfully executed
         data:
-          description: The response payload. `null` when the resource is not found.
-          nullable: true
+          description: The response payload. Untyped — accepts any JSON value, including `null`.
 
     RecordNotFoundEnvelope:
       type: object
@@ -79,13 +101,29 @@ components:
           type: string
           example: RECORD_NOT_FOUND
           description: |
-            Returned as `HTTP 200` — the referenced resource doesn't exist or isn't in your workspace.
+            Returned as `HTTP 200` on list endpoints when the query matches no records.
             Always check the `status` field in the body, not just the HTTP status code.
         message:
           type: string
-          example: Application not found
+          example: recordNotFound
         data:
-          nullable: true
+          example: null
+
+    NotFoundEnvelope:
+      type: object
+      required: [status, message, data]
+      properties:
+        status:
+          type: string
+          example: NOT_FOUND
+          description: |
+            Returned as a real `HTTP 404` on single-resource endpoints (get/update/delete by ID,
+            skills, interview config, publish, send/generate interview link) — the referenced
+            `jobId`/`applicationId` doesn't exist or isn't part of your workspace.
+        message:
+          type: string
+          example: Job not found
+        data:
           example: null
 
     ValidationErrorEnvelope:
@@ -99,7 +137,6 @@ components:
           type: string
           example: jobId is required
         data:
-          nullable: true
           example: null
 
     UnauthorizedEnvelope:
@@ -113,7 +150,6 @@ components:
           type: string
           example: Missing, invalid, revoked, or expired API key
         data:
-          nullable: true
           example: null
 
     RateLimitEnvelope:
@@ -127,14 +163,250 @@ components:
           type: string
           example: Too many requests
         data:
-          nullable: true
           example: null
 
-    # ── Request bodies ──────────────────────────
+    # ── Shared building blocks ──────────────────
+
+    ListRequestBody:
+      type: object
+      description: |
+        Same shape across every list endpoint: `query` is a Mongo-style filter, `options` controls
+        pagination/sorting/projection. Every query is scoped to your workspace regardless of what you
+        send — you cannot read another workspace's data through this endpoint.
+      properties:
+        query:
+          type: object
+          description: Mongo-style filter object. Field names match the resource's data model.
+          additionalProperties: true
+        options:
+          type: object
+          properties:
+            page:
+              type: integer
+              default: 1
+              example: 1
+            limit:
+              type: integer
+              default: 20
+              maximum: 100
+              description: Capped at 100 regardless of what you request.
+              example: 20
+            sort:
+              type: object
+              additionalProperties: true
+              example: { createdAt: -1 }
+            select:
+              description: Fields to project — space-separated string or array of field names.
+              oneOf:
+                - type: string
+                - type: array
+                  items:
+                    type: string
+        isCountOnly:
+          type: boolean
+          description: 'If `true`, returns `{ "totalRecords": N }` instead of the paginated list.'
+          example: false
+
+    ListJobsRequestBody:
+      type: object
+      description: |
+        `options` controls pagination/sorting. Every query is scoped to your workspace regardless of what
+        you send — you cannot read another workspace's data through this endpoint.
+      properties:
+        query:
+          type: object
+          description: |
+            Filter object. Only `status`, `title`, and `_id` are accepted — any other field is rejected
+            with `422`.
+          properties:
+            status:
+              description: Exact match against a single status, or an array to match any of several.
+              oneOf:
+                - type: string
+                - type: array
+                  items:
+                    type: string
+              example: draft
+            title:
+              type: string
+              description: Case-insensitive substring match against the job title.
+              example: Python Developer
+            _id:
+              description: Exact match against a single job ID, or an array to match any of several.
+              oneOf:
+                - type: string
+                - type: array
+                  items:
+                    type: string
+              example: job_abc123
+        options:
+          type: object
+          properties:
+            page:
+              type: integer
+              default: 1
+              example: 1
+            limit:
+              type: integer
+              default: 20
+              maximum: 100
+              description: Capped at 100 regardless of what you request.
+              example: 20
+            sort:
+              type: object
+              additionalProperties: true
+              example: { createdAt: -1 }
+            select:
+              description: Fields to project — space-separated string or array of field names.
+              oneOf:
+                - type: string
+                - type: array
+                  items:
+                    type: string
+        isCountOnly:
+          type: boolean
+          description: 'If `true`, returns `{ "totalRecords": N }` instead of the paginated list.'
+          example: false
+
+    ListApplicationsRequestBody:
+      type: object
+      description: |
+        `options` controls pagination/sorting. Every query is scoped to your workspace regardless of what
+        you send — you cannot read another workspace's data through this endpoint.
+      properties:
+        query:
+          type: object
+          description: Filter object. Only `name` and `_id` are accepted — any other field is rejected with `422`.
+          properties:
+            name:
+              type: string
+              description: Case-insensitive substring match against the candidate's name.
+              example: John
+            _id:
+              description: Exact match against a single application ID, or an array to match any of several.
+              oneOf:
+                - type: string
+                - type: array
+                  items:
+                    type: string
+              example: app_xyz789
+        options:
+          type: object
+          properties:
+            page:
+              type: integer
+              default: 1
+              example: 1
+            limit:
+              type: integer
+              default: 20
+              maximum: 100
+              description: Capped at 100 regardless of what you request.
+              example: 20
+            sort:
+              type: object
+              additionalProperties: true
+              example: { createdAt: -1 }
+            select:
+              description: Fields to project — space-separated string or array of field names.
+              oneOf:
+                - type: string
+                - type: array
+                  items:
+                    type: string
+        isCountOnly:
+          type: boolean
+          description: 'If `true`, returns `{ "totalRecords": N }` instead of the paginated list.'
+          example: false
+
+    CountOnlyData:
+      type: object
+      properties:
+        totalRecords:
+          type: integer
+          example: 42
+
+    SkillItem:
+      type: object
+      required: [skill_name]
+      properties:
+        skill_name:
+          type: string
+          example: Node.js
+        proficiency:
+          type: string
+          enum: [L1, L2, L3, L4, L5]
+          example: L3
+        preferred_tools:
+          type: array
+          items:
+            type: string
+        preferred_technologies:
+          type: array
+          items:
+            type: string
+
+    QuestionItem:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          example: Describe a time you optimized a slow query.
+        topic_name:
+          type: string
+          example: Databases
+        question_proficiency:
+          type: string
+          enum: [L1, L2, L3, L4, L5, 'Not specified']
+          example: L3
+        key_aspects_to_be_covered:
+          type: array
+          items:
+            type: string
+        skills_covered:
+          type: array
+          items:
+            type: string
+          example: [SQL]
+        question_type:
+          type: string
+          example: video
+        order:
+          type: integer
+          example: 1
+
+    TopicItem:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          example: System Design
+        skillsUsed:
+          type: array
+          items:
+            type: string
+        reason:
+          type: string
+        discussionMinutes:
+          type: integer
+          minimum: 1
+          maximum: 60
+          example: 15
+        sampleQuestions:
+          type: array
+          items:
+            type: string
+
+    # ── Job request bodies ──────────────────────
 
     CreateJobRequest:
       type: object
       required: [title]
+      description: |
+        Creates the job as a **draft**. Add skills and an interview configuration, then publish it separately.
+        Only the listed fields are editable via this API — any other field is rejected with `422`.
       properties:
         title:
           type: string
@@ -144,85 +416,168 @@ components:
           type: string
           description: Job description / requirements.
           example: We are looking for an experienced Python developer with strong backend skills.
-        skills:
+        location:
+          description: A single location, or an array for multi-city postings.
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+          example: Bangalore, India
+        employment_type:
+          type: string
+          enum: [Full-time, Part-time, Contract, Internship, 'Not specified']
+          example: Full-time
+        work_mode:
+          type: string
+          enum: [On-site, Hybrid, Remote, 'Not specified']
+          example: Remote
+        work_type:
+          type: string
+          enum: [Full-time, Part-time, Contract, Internship, 'Not specified']
+          example: Full-time
+        salary_min:
+          type: string
+        salary_max:
+          type: string
+        min_experience:
+          type: string
+          example: '3'
+        max_experience:
+          type: string
+          example: '7'
+        last_date:
+          type: string
+          format: date
+          description: Application deadline, as `YYYY-MM-DD`.
+          example: '2026-09-15'
+
+    UpdateJobRequest:
+      type: object
+      minProperties: 1
+      description: |
+        Updates an existing job. Only send the fields you want to change. Skills and interview
+        configuration are **not** accepted here — use `PUT /jobs/{jobId}/skills`,
+        `PUT /jobs/{jobId}/questions`, and `PUT /jobs/{jobId}/topics` instead. Only the listed fields are
+        editable via this API — any other field (including `requirements`, `salary`, `education`,
+        `min_qualification_needed`, `external_job_id`, and any field not listed below) is rejected with
+        `422`.
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        location:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        employment_type:
+          type: string
+          enum: [Full-time, Part-time, Contract, Internship, 'Not specified']
+        work_mode:
+          type: string
+          enum: [On-site, Hybrid, Remote, 'Not specified']
+        work_type:
+          type: string
+          enum: [Full-time, Part-time, Contract, Internship, 'Not specified']
+        salary_min:
+          type: string
+        salary_max:
+          type: string
+        min_experience:
+          type: string
+        max_experience:
+          type: string
+        last_date:
+          type: string
+          format: date
+          description: Application deadline, as `YYYY-MM-DD`.
+          example: '2026-09-15'
+
+    UpdateSkillsRequest:
+      type: object
+      minProperties: 1
+      description: |
+        **Full replace** of the skills sub-resource. Any bucket you omit is cleared, not left unchanged —
+        send all three buckets if you want to keep existing values in one of them.
+      properties:
+        must_have_skills:
+          type: array
+          items:
+            $ref: '#/components/schemas/SkillItem'
+        good_to_have_skills:
+          type: array
+          items:
+            $ref: '#/components/schemas/SkillItem'
+        bonus_skills:
+          type: array
+          items:
+            $ref: '#/components/schemas/SkillItem'
+
+    UpdateQuestionsRequest:
+      type: object
+      required: [questions]
+      description: |
+        **Full replace** of the job's interview question bank. Previously-referenced question documents
+        are left intact (not deleted, since past applications may reference them) — only the job's pointer
+        to them changes. Send an empty array to clear all questions.
+      properties:
+        questions:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionItem'
+
+    UpdateTopicsRequest:
+      type: object
+      minProperties: 1
+      description: |
+        **Full replace** of the job's focus/avoid discussion-topic guidance. Send both properties if you
+        want to keep existing values in one of them — an omitted property is cleared, not left unchanged.
+      properties:
+        topicsToFocus:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopicItem'
+        topicsToAvoid:
           type: array
           items:
             type: string
-          description: Required skills for the job.
-          example: [Python, Django, PostgreSQL]
-        experience_range:
-          type: object
-          properties:
-            min_years:
-              type: integer
-              example: 3
-            max_years:
-              type: integer
-              example: 7
-        location:
-          type: string
-          example: Bangalore, India
-        job_type:
-          type: string
-          enum: [full_time, part_time, contract, internship]
-          example: full_time
-        interview_config:
-          type: object
-          properties:
-            # interview_type:
-            #   type: string
-            #   enum: [standard, agent, voice_agent]
-            #   description: |
-            #     Which interview engine runs:
-            #     - `standard` — pre-set questions with follow-ups
-            #     - `agent` — AI agent conducts the interview adaptively
-            #     - `voice_agent` — voice-based conversational interview
-            #   example: standard
-            conversational:
-              type: boolean
-              example: true
-              # description: Allows the candidate to choose a conversational interview mode (with follow-up questions) instead of a standard interview.
-            duration_minutes:
-              type: integer
-              example: 30
-            follow_up_questions:
-              type: boolean
-              example: true
-            proctoring_enabled:
-              type: boolean
-              example: true
-            gaze_tracking:
-              type: boolean
-              example: true
+
+    # ── Application request bodies ──────────────
 
     CreateApplicationRequest:
       type: object
-      required: [jobId, candidateEmail]
+      required: [job, email, name, number]
+      description: All four fields are required. Any other field is rejected with `422`.
       properties:
-        jobId:
+        job:
           type: string
           description: ID of a job in your workspace.
           example: job_abc123
-        candidateEmail:
+        email:
           type: string
           format: email
           description: Used to find or create the candidate.
           example: john@example.com
-        candidateName:
+        name:
           type: string
-          description: Defaults from the email if omitted.
           example: John Doe
-        candidatePhone:
+        number:
           type: string
           example: '+919876543210'
-        resume:
+
+    UpdateApplicationRequest:
+      type: object
+      required: [name]
+      description: |
+        Only the candidate's `name` is editable via this API for now. Any other field is rejected with
+        `422`.
+      properties:
+        name:
           type: string
-          description: Resume URL or reference.
-          example: https://example.com/resume.pdf
-        sendInterviewLink:
-          type: boolean
-          description: If `true`, emails the candidate their private interview link immediately.
-          example: true
+          example: John Doe
 
     # ── Response data schemas ───────────────────
 
@@ -235,14 +590,136 @@ components:
         title:
           type: string
           example: Senior Python Developer
+        description:
+          type: string
+        location:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        employment_type:
+          type: string
+        work_mode:
+          type: string
+        work_type:
+          type: string
+        publicationStatus:
+          type: string
+          enum:
+            [
+              draft,
+              published,
+              hiring_in_progress,
+              hiring_completed,
+              closed,
+              completed,
+            ]
+          example: draft
         status:
           type: string
-          enum: [active, closed, draft]
-          example: active
-        created_at:
+          enum:
+            [
+              draft,
+              published,
+              hiring_in_progress,
+              hiring_completed,
+              closed,
+              completed,
+            ]
+          example: draft
+        application_count:
+          type: integer
+          example: 0
+        createdAt:
           type: string
           format: date-time
           example: 2026-08-01T10:00:00Z
+        updatedAt:
+          type: string
+          format: date-time
+          example: 2026-08-01T10:00:00Z
+
+    JobSkillsData:
+      type: object
+      properties:
+        id:
+          type: string
+          example: job_abc123
+        jd_structured_skills:
+          type: object
+          properties:
+            must_have_skills:
+              type: array
+              items:
+                $ref: '#/components/schemas/SkillItem'
+            good_to_have_skills:
+              type: array
+              items:
+                $ref: '#/components/schemas/SkillItem'
+            bonus_skills:
+              type: array
+              items:
+                $ref: '#/components/schemas/SkillItem'
+
+    JobQuestionsData:
+      type: object
+      properties:
+        id:
+          type: string
+          example: job_abc123
+        title:
+          type: string
+        questions:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionItem'
+        updatedAt:
+          type: string
+          format: date-time
+
+    JobTopicsData:
+      type: object
+      properties:
+        id:
+          type: string
+          example: job_abc123
+        title:
+          type: string
+        topics:
+          type: object
+          properties:
+            topicsToFocus:
+              type: array
+              items:
+                $ref: '#/components/schemas/TopicItem'
+            topicsToAvoid:
+              type: array
+              items:
+                type: string
+        updatedAt:
+          type: string
+          format: date-time
+
+    JobListData:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobData'
+        currentPage:
+          type: integer
+          example: 1
+        perPage:
+          type: integer
+          example: 20
+        itemCount:
+          type: integer
+          example: 1
+        pageCount:
+          type: integer
+          example: 1
 
     ApplicationData:
       type: object
@@ -250,9 +727,6 @@ components:
         id:
           type: string
           example: app_xyz789
-        jobId:
-          type: string
-          example: job_abc123
         candidate:
           type: object
           properties:
@@ -263,13 +737,51 @@ components:
               type: string
               format: email
               example: john@example.com
+            mobileNo:
+              type: string
+        job:
+          type: object
+          properties:
+            id:
+              type: string
+              example: job_abc123
+            title:
+              type: string
+              example: Senior Python Developer
         status:
           type: string
-          example: created
-        created_at:
+          example: interview_link_not_sent
+        shortlisted:
+          type: boolean
+          example: false
+        createdAt:
           type: string
           format: date-time
           example: 2026-08-01T10:05:00Z
+        updatedAt:
+          type: string
+          format: date-time
+          example: 2026-08-01T10:05:00Z
+
+    ApplicationListData:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApplicationData'
+        currentPage:
+          type: integer
+          example: 1
+        perPage:
+          type: integer
+          example: 20
+        itemCount:
+          type: integer
+          example: 1
+        pageCount:
+          type: integer
+          example: 1
 
     InterviewInvitationData:
       type: object
@@ -296,10 +808,121 @@ components:
           description: The candidate's private interview link.
           example: https://hyrefast.ai/interview/ivw_def456?token=abc123
 
+    # ── Webhook request bodies ──────────────────
+
+    CreateWebhookRequest:
+      type: object
+      required: [name, url]
+      description: |
+        Registers your webhook URL. A workspace may register only one — this is rejected with `422` if
+        one already exists. There is no `events` field: a registered webhook receives every supported
+        event. `name` and `url` are the only accepted fields — any other field is rejected with `422`.
+      properties:
+        name:
+          type: string
+          description: A human-friendly label for your own reference.
+          example: Production ATS sync
+        url:
+          type: string
+          format: uri
+          description: HTTPS (or HTTP) endpoint that will receive the POSTed event payload.
+          example: https://api.yourats.com/hooks/hyrefast
+
+    UpdateWebhookRequest:
+      type: object
+      minProperties: 1
+      description: |
+        Only `name` and `url` are editable via this API — any other field (including `status`) is
+        rejected with `422`. Only send the field(s) you want to change.
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+          format: uri
+
+    # ── Webhook response data schemas ───────────
+
+    WebhookData:
+      type: object
+      properties:
+        id:
+          type: string
+          example: whk_qrs321
+        workspace:
+          type: string
+          example: ws_123456
+        name:
+          type: string
+          example: Production ATS sync
+        url:
+          type: string
+          example: https://api.yourats.com/hooks/hyrefast
+        status:
+          type: string
+          enum: [active, disabled]
+          example: active
+        lastTriggeredAt:
+          type: [string, 'null']
+          format: date-time
+          example: null
+        createdAt:
+          type: string
+          format: date-time
+          example: 2026-08-01T10:00:00Z
+        updatedAt:
+          type: string
+          format: date-time
+          example: 2026-08-01T10:00:00Z
+
+    WebhookCreateData:
+      type: object
+      description: |
+        Same fields as `WebhookData`, plus the signing `secret` — shown **only** in this response. Store
+        it securely; there is no way to retrieve it again later (you'd need to delete and re-register).
+      properties:
+        id:
+          type: string
+          example: whk_qrs321
+        workspace:
+          type: string
+          example: ws_123456
+        name:
+          type: string
+          example: Production ATS sync
+        url:
+          type: string
+          example: https://api.yourats.com/hooks/hyrefast
+        status:
+          type: string
+          enum: [active, disabled]
+          example: active
+        secret:
+          type: string
+          example: whsec_5f3a9c1e8b2d4f6a7c0e1b3d5f7a9c1e8b2d4f6a7c0e1b3d5f7a9c1e8b2d4f6a
+        lastTriggeredAt:
+          type: [string, 'null']
+          format: date-time
+          example: null
+        createdAt:
+          type: string
+          format: date-time
+          example: 2026-08-01T10:00:00Z
+        updatedAt:
+          type: string
+          format: date-time
+          example: 2026-08-01T10:00:00Z
+
   # ─────────────────────────────────────────────
   # Reusable responses
   # ─────────────────────────────────────────────
   responses:
+    NotFound:
+      description: The referenced `jobId`/`applicationId` doesn't exist or isn't part of your workspace.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/NotFoundEnvelope'
     Unauthorized:
       description: Missing, invalid, revoked, or expired API key.
       content:
@@ -338,7 +961,6 @@ components:
               message:
                 type: string
               data:
-                nullable: true
                 example: null
 
 # ─────────────────────────────────────────────
@@ -348,21 +970,160 @@ tags:
   - name: Jobs
     description: Create and manage job postings in your workspace.
   - name: Applications
-    description: Submit candidate applications against existing jobs.
+    description: Submit and manage candidate applications against existing jobs.
   - name: Interviews
     description: Send or retrieve interview invitation links.
+  - name: Webhooks
+    description: |
+      Register a URL to receive real-time event notifications instead of polling. Registration is
+      **URL-based, not event-based**: a workspace may register only one webhook URL, and that single
+      registration receives every supported event. A second registration attempt while one is already
+      active is rejected — update or delete the existing one first.
+
+      **Supported events**
+
+      | Event | Fired when |
+      |---|---|
+      | `interview_completed` | A candidate completed their interview |
+
+      <!--
+      Other supported events, hidden for now:
+      | `application_resume_scored` | A candidate's resume has been scored against the job |
+      | `interview_link_sent` | An interview invitation email was sent to a candidate |
+      | `interview_started` | A candidate started their interview |
+      -->
+
+      **Delivery**
+
+      Each event is `POST`ed to your registered URL as:
+
+      ```json
+      {
+        "id": "evt_9c1c2e...",
+        "event": "interview_completed",
+        "createdAt": "2026-08-01T10:10:00Z",
+        "data": { "...": "resource ids and metadata describing the event" }
+      }
+      ```
+
+      with these request headers:
+
+      | Header | Description |
+      |---|---|
+      | `Content-Type` | Always `application/json` |
+      | `X-Hyrefast-Event` | The event name, e.g. `interview_completed` |
+      | `X-Hyrefast-Timestamp` | Unix ms timestamp the request was signed at |
+      | `X-Hyrefast-Signature` | HMAC-SHA256 signature, hex-encoded — see below |
+
+      **Verifying the signature**
+
+      Compute `HMAC-SHA256(secret, "${timestamp}.${rawRequestBody}")` (hex digest) using the `secret`
+      returned once when you created the webhook, and compare it to `X-Hyrefast-Signature` using a
+      constant-time comparison. Use `X-Hyrefast-Timestamp` to reject stale requests and prevent replay.
+      The `secret` is shown only in the response to `POST /webhook-subscription/create` — store it
+      securely; it cannot be retrieved again later.
+
+      **Retries**
+
+      A failed delivery (non-2xx response, or no response within 10s) is retried up to 5 times with
+      exponential backoff (5s, 10s, 20s, 40s, 80s). Because of retries, your endpoint may receive the
+      same `id` more than once — make handling idempotent (e.g. skip an `id` you've already processed).
+
+      **Example: handling `interview_completed` (Node.js / Express)**
+
+      A minimal handler that verifies the signature, then reacts to the event. The key gotcha: signature
+      verification needs the *raw* request body bytes, not the JSON-parsed object — capture it with
+      `express.json({ verify })` before anything re-serializes the body.
+
+      ```javascript
+      const express = require('express');
+      const crypto = require('crypto');
+
+      const app = express();
+      const WEBHOOK_SECRET = process.env.HYREFAST_WEBHOOK_SECRET; // the `secret` from POST /webhook-subscription/create
+
+      // Capture the raw body alongside the parsed one - required for signature verification.
+      app.use(express.json({
+        verify: (req, res, buf) => { req.rawBody = buf; },
+      }));
+
+      function isValidSignature(req) {
+        const timestamp = req.header('X-Hyrefast-Timestamp');
+        const signature = req.header('X-Hyrefast-Signature');
+        if (!timestamp || !signature) return false;
+
+        // Reject requests older than 5 minutes to prevent replay.
+        if (Math.abs(Date.now() - Number(timestamp)) > 5 * 60 * 1000) return false;
+
+        const expected = crypto
+          .createHmac('sha256', WEBHOOK_SECRET)
+          .update(`${timestamp}.${req.rawBody}`)
+          .digest('hex');
+
+        const expectedBuf = Buffer.from(expected, 'hex');
+        const actualBuf = Buffer.from(signature, 'hex');
+        return (
+          expectedBuf.length === actualBuf.length &&
+          crypto.timingSafeEqual(expectedBuf, actualBuf)
+        );
+      }
+
+      app.post('/webhooks/hyrefast', (req, res) => {
+        if (!isValidSignature(req)) {
+          return res.status(401).json({ error: 'Invalid signature' });
+        }
+
+        // Acknowledge immediately - Hyrefast times out (and retries) after 10s.
+        // Do any slow work (DB writes, other API calls) after responding, not before.
+        res.status(200).json({ received: true });
+
+        const { id, event, data } = req.body;
+        if (event === 'interview_completed') {
+          const { applicationId, candidateId, jobId, completedAt } = data;
+          console.log(`Interview completed for application ${applicationId}`, {
+            candidateId,
+            jobId,
+            completedAt,
+          });
+          // e.g. mark the candidate as "interview complete" in your ATS,
+          // keyed by applicationId/candidateId. Use `id` to de-duplicate retries.
+        }
+      });
+
+      app.listen(3000);
+      ```
+
+      **Example payload delivered to your endpoint** for `interview_completed`:
+
+      ```json
+      {
+        "id": "evt_9c1c2e4a-1b2d-4e5f-8a9b-0c1d2e3f4a5b",
+        "event": "interview_completed",
+        "createdAt": "2026-08-01T10:10:00Z",
+        "data": {
+          "applicationId": "app_xyz789",
+          "candidateId": "cand_abc123",
+          "jobId": "job_abc123",
+          "completedAt": "2026-08-01T10:09:45Z"
+        }
+      }
+      ```
+
+      **Expected response**: any `2xx` status code within 10 seconds counts as a successful delivery -
+      the response body isn't inspected, so `{ "received": true }` is just a convention, not a
+      requirement. Anything else (4xx/5xx, timeout, connection error) is treated as a failure and retried.
 
 # ─────────────────────────────────────────────
 # Paths
 # ─────────────────────────────────────────────
 paths:
   # ── 1. Create Job ────────────────────────────
-  /external/api/v1/jobs:
+  /external/api/v1/jobs/create:
     post:
       operationId: createJob
       tags: [Jobs]
       summary: Create a job
-      description: Creates a new job in the workspace associated with your API key.
+      description: Creates a new **draft** job in the workspace associated with your API key.
       requestBody:
         required: true
         content:
@@ -371,23 +1132,21 @@ paths:
               $ref: '#/components/schemas/CreateJobRequest'
             examples:
               full_example:
-                summary: Full example with interview config
+                summary: Full example
                 value:
                   title: Senior Python Developer
                   description: We are looking for an experienced Python developer with strong backend skills.
-                  skills: [Python, Django, PostgreSQL]
-                  experience_range:
-                    min_years: 3
-                    max_years: 7
                   location: Bangalore, India
-                  job_type: full_time
-                  interview_config:
-                    # interview_type: standard
-                    conversational: true
-                    duration_minutes: 30
+                  employment_type: Full-time
+                  work_mode: Remote
+                  min_experience: '3'
+                  max_experience: '7'
+                  salary_min: '1000000'
+                  salary_max: '1500000'
+                  last_date: '2026-09-15'
       responses:
         '200':
-          description: Job created successfully.
+          description: Job created successfully (as a draft).
           content:
             application/json:
               schema:
@@ -405,8 +1164,9 @@ paths:
                     data:
                       id: job_abc123
                       title: Senior Python Developer
-                      status: active
-                      created_at: 2026-08-01T10:00:00Z
+                      publicationStatus: draft
+                      status: draft
+                      createdAt: 2026-08-01T10:00:00Z
         '422':
           description: Validation error — missing or invalid job fields.
           content:
@@ -422,19 +1182,18 @@ paths:
       x-codeSamples:
         - lang: cURL
           source: |
-            curl -X POST "https://api.hyrefast.ai/external/api/v1/jobs" \
+            curl -X POST "https://api.hyrefast.ai/external/api/v1/jobs/create" \
               -H "X-API-Key: YOUR_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{
                 "title": "Senior Python Developer",
                 "description": "We are looking for...",
-                "skills": ["Python", "Django", "PostgreSQL"],
-                "job_type": "full_time",
+                "employment_type": "Full-time",
                 "location": "Bangalore, India"
               }'
         - lang: JavaScript
           source: |
-            const response = await fetch(`${BASE_URL}/external/api/v1/jobs`, {
+            const response = await fetch(`${BASE_URL}/external/api/v1/jobs/create`, {
               method: 'POST',
               headers: {
                 'X-API-Key': API_KEY,
@@ -443,8 +1202,7 @@ paths:
               body: JSON.stringify({
                 title: 'Senior Python Developer',
                 description: 'We are looking for...',
-                skills: ['Python', 'Django', 'PostgreSQL'],
-                job_type: 'full_time',
+                employment_type: 'Full-time',
                 location: 'Bangalore, India',
               }),
             });
@@ -454,27 +1212,598 @@ paths:
             import requests
 
             response = requests.post(
-                f"{BASE_URL}/external/api/v1/jobs",
+                f"{BASE_URL}/external/api/v1/jobs/create",
                 headers={"X-API-Key": API_KEY},
                 json={
                     "title": "Senior Python Developer",
                     "description": "We are looking for...",
-                    "skills": ["Python", "Django", "PostgreSQL"],
-                    "job_type": "full_time",
+                    "employment_type": "Full-time",
                     "location": "Bangalore, India",
                 },
             )
             data = response.json()["data"]
 
-  # ── 2. Create Application ────────────────────
-  /external/api/v1/applications:
+  # ── 2. List Jobs ──────────────────────────────
+  /external/api/v1/jobs/list:
+    post:
+      operationId: listJobs
+      tags: [Jobs]
+      summary: List jobs
+      description: |
+        Paginated list of jobs owned by your workspace, most recent first. Filterable only by `status`,
+        `title`, and `_id` — any other field in `query` is rejected with `422`. Always scoped to your
+        workspace; if `query` is omitted, every job in your workspace is returned.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ListJobsRequestBody'
+            examples:
+              filtered:
+                summary: Filter by status, paginate
+                value:
+                  query: { status: draft }
+                  options: { page: 1, limit: 20 }
+              search_by_title:
+                summary: Search by title
+                value:
+                  query: { title: Python Developer }
+                  options: { page: 1, limit: 20 }
+              count_only:
+                summary: Count only
+                value:
+                  query: { status: published }
+                  isCountOnly: true
+      responses:
+        '200':
+          description: |
+            Jobs matched, or an empty result. `data` is a `JobListData` object when jobs are found,
+            a `CountOnlyData` object (`{ "totalRecords": N }`) when `isCountOnly: true`, or `null`
+            (with `status: RECORD_NOT_FOUND`) when the query matches nothing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessEnvelope'
+              examples:
+                success:
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      data:
+                        - id: job_abc123
+                          title: Senior Python Developer
+                          publicationStatus: draft
+                          status: draft
+                      currentPage: 1
+                      perPage: 20
+                      itemCount: 1
+                      pageCount: 1
+                empty:
+                  summary: No jobs matched the query
+                  value:
+                    status: RECORD_NOT_FOUND
+                    message: recordNotFound
+                    data: null
+        '422':
+          description: Validation error — invalid `query` or `options` field.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X POST "https://api.hyrefast.ai/external/api/v1/jobs/list" \
+              -H "X-API-Key: YOUR_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{ "query": { "status": "draft" }, "options": { "page": 1, "limit": 20 } }'
+        - lang: JavaScript
+          source: |
+            const response = await fetch(`${BASE_URL}/external/api/v1/jobs/list`, {
+              method: 'POST',
+              headers: {
+                'X-API-Key': API_KEY,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                query: { status: 'draft' },
+                options: { page: 1, limit: 20 },
+              }),
+            });
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.post(
+                f"{BASE_URL}/external/api/v1/jobs/list",
+                headers={"X-API-Key": API_KEY},
+                json={
+                    "query": {"status": "draft"},
+                    "options": {"page": 1, "limit": 20},
+                },
+            )
+            data = response.json()["data"]
+
+  # ── 3. Update Job ─────────────────────────────
+  /external/api/v1/jobs/partial-update/{jobId}:
+    put:
+      operationId: updateJob
+      tags: [Jobs]
+      summary: Update job
+      description: |
+        Updates an existing job. Skills and interview configuration are updated
+        through their own endpoints.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateJobRequest'
+            examples:
+              rename:
+                value:
+                  title: Senior Backend Engineer
+      responses:
+        '200':
+          description: Job updated successfully.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/JobData'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Validation error — unknown field (use the skills/questions/topics endpoints for those) or invalid value.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X PUT "https://api.hyrefast.ai/external/api/v1/jobs/partial-update/job_abc123" \
+              -H "X-API-Key: YOUR_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{ "title": "Senior Backend Engineer" }'
+        - lang: JavaScript
+          source: |
+            const response = await fetch(
+              `${BASE_URL}/external/api/v1/jobs/partial-update/${JOB_ID}`,
+              {
+                method: 'PUT',
+                headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title: 'Senior Backend Engineer' }),
+              },
+            );
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.put(
+                f"{BASE_URL}/external/api/v1/jobs/partial-update/{JOB_ID}",
+                headers={"X-API-Key": API_KEY},
+                json={"title": "Senior Backend Engineer"},
+            )
+            data = response.json()["data"]
+
+  # ── 4. Update Skills ──────────────────────────
+  /external/api/v1/jobs/{jobId}/skills:
+    put:
+      operationId: updateJobSkills
+      tags: [Jobs]
+      summary: Update job skills
+      description: Sets (full replace) the must-have / good-to-have / bonus skill buckets for a job.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSkillsRequest'
+            examples:
+              example:
+                value:
+                  must_have_skills:
+                    - skill_name: Node.js
+                      proficiency: L3
+                  good_to_have_skills:
+                    - skill_name: AWS
+                  bonus_skills: []
+      responses:
+        '200':
+          description: Skills updated successfully.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/JobSkillsData'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Validation error — at least one bucket is required, or a skill item is missing `skill_name`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X PUT "https://api.hyrefast.ai/external/api/v1/jobs/job_abc123/skills" \
+              -H "X-API-Key: YOUR_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{ "must_have_skills": [{ "skill_name": "Node.js" }] }'
+        - lang: JavaScript
+          source: |
+            const response = await fetch(
+              `${BASE_URL}/external/api/v1/jobs/${JOB_ID}/skills`,
+              {
+                method: 'PUT',
+                headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ must_have_skills: [{ skill_name: 'Node.js' }] }),
+              },
+            );
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.put(
+                f"{BASE_URL}/external/api/v1/jobs/{JOB_ID}/skills",
+                headers={"X-API-Key": API_KEY},
+                json={"must_have_skills": [{"skill_name": "Node.js"}]},
+            )
+            data = response.json()["data"]
+
+  # ── 5a. Update Job Questions ──────────────────
+  /external/api/v1/jobs/{jobId}/questions:
+    put:
+      operationId: updateJobQuestions
+      tags: [Jobs]
+      summary: Update job questions
+      description: |
+        Sets (full replace) the job's interview question bank. Existing question documents referenced by
+        past applications are left intact — only the job's pointer to them changes. Send an empty array to
+        clear all questions. Topic guidance is a separate sub-resource — see `PUT /jobs/{jobId}/topics`.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateQuestionsRequest'
+            examples:
+              example:
+                value:
+                  questions:
+                    - title: Describe a time you optimized a slow query.
+                      topic_name: Databases
+                      question_proficiency: L3
+                      skills_covered: [SQL]
+      responses:
+        '200':
+          description: Questions updated successfully.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/JobQuestionsData'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Validation error — `questions` is missing, or a question is missing its `title`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X PUT "https://api.hyrefast.ai/external/api/v1/jobs/job_abc123/questions" \
+              -H "X-API-Key: YOUR_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{ "questions": [{ "title": "Describe a time you optimized a slow query." }] }'
+        - lang: JavaScript
+          source: |
+            const response = await fetch(
+              `${BASE_URL}/external/api/v1/jobs/${JOB_ID}/questions`,
+              {
+                method: 'PUT',
+                headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  questions: [{ title: 'Describe a time you optimized a slow query.' }],
+                }),
+              },
+            );
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.put(
+                f"{BASE_URL}/external/api/v1/jobs/{JOB_ID}/questions",
+                headers={"X-API-Key": API_KEY},
+                json={"questions": [{"title": "Describe a time you optimized a slow query."}]},
+            )
+            data = response.json()["data"]
+
+  # ── 5b. Update Job Topics ─────────────────────
+  # /external/api/v1/jobs/{jobId}/topics:
+  #   put:
+  #     operationId: updateJobTopics
+  #     tags: [Jobs]
+  #     summary: Update job topics
+  #     description: |
+  #       Sets (full replace) the job's focus/avoid discussion-topic guidance. Send both properties if you
+  #       want to keep existing values in one of them — an omitted property is cleared, not left unchanged.
+  #       The question bank is a separate sub-resource — see `PUT /jobs/{jobId}/questions`.
+  #     parameters:
+  #       - $ref: '#/components/parameters/JobId'
+  #     requestBody:
+  #       required: true
+  #       content:
+  #         application/json:
+  #           schema:
+  #             $ref: '#/components/schemas/UpdateTopicsRequest'
+  #           examples:
+  #             example:
+  #               value:
+  #                 topicsToFocus:
+  #                   - name: System Design
+  #                     discussionMinutes: 15
+  #                 topicsToAvoid: [Salary negotiation]
+  #     responses:
+  #       '200':
+  #         description: Topics updated successfully.
+  #         content:
+  #           application/json:
+  #             schema:
+  #               allOf:
+  #                 - $ref: '#/components/schemas/SuccessEnvelope'
+  #                 - type: object
+  #                   properties:
+  #                     data:
+  #                       $ref: '#/components/schemas/JobTopicsData'
+  #       '404':
+  #         $ref: '#/components/responses/NotFound'
+  #       '422':
+  #         description: Validation error — at least one of `topicsToFocus` / `topicsToAvoid` is required, or a topic is missing its `name`.
+  #         content:
+  #           application/json:
+  #             schema:
+  #               $ref: '#/components/schemas/ValidationErrorEnvelope'
+  #       '401':
+  #         $ref: '#/components/responses/Unauthorized'
+  #       '429':
+  #         $ref: '#/components/responses/RateLimited'
+  #       '500':
+  #         $ref: '#/components/responses/InternalServerError'
+  #     x-codeSamples:
+  #       - lang: cURL
+  #         source: |
+  #           curl -X PUT "https://api.hyrefast.ai/external/api/v1/jobs/job_abc123/topics" \
+  #             -H "X-API-Key: YOUR_API_KEY" \
+  #             -H "Content-Type: application/json" \
+  #             -d '{ "topicsToFocus": [{ "name": "System Design", "discussionMinutes": 15 }] }'
+  #       - lang: JavaScript
+  #         source: |
+  #           const response = await fetch(
+  #             `${BASE_URL}/external/api/v1/jobs/${JOB_ID}/topics`,
+  #             {
+  #               method: 'PUT',
+  #               headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+  #               body: JSON.stringify({
+  #                 topicsToFocus: [{ name: 'System Design', discussionMinutes: 15 }],
+  #               }),
+  #             },
+  #           );
+  #           const { data } = await response.json();
+  #       - lang: Python
+  #         source: |
+  #           import requests
+  #
+  #           response = requests.put(
+  #               f"{BASE_URL}/external/api/v1/jobs/{JOB_ID}/topics",
+  #               headers={"X-API-Key": API_KEY},
+  #               json={"topicsToFocus": [{"name": "System Design", "discussionMinutes": 15}]},
+  #           )
+  #           data = response.json()["data"]
+
+  # ── 6. Publish Job ────────────────────────────
+  /external/api/v1/jobs/{jobId}/publish:
+    post:
+      operationId: publishJob
+      tags: [Jobs]
+      summary: Publish job
+      description: |
+        Attempts to publish a job. Validates the job has the required information first — a title,
+        description, location, at least one must-have skill, and at least one interview question or
+        topic. If anything is missing, returns `422` with details instead of publishing.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Job published successfully.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/JobData'
+              examples:
+                success:
+                  value:
+                    status: SUCCESS
+                    message: Job published successfully.
+                    data:
+                      id: job_abc123
+                      title: Senior Python Developer
+                      publicationStatus: published
+                      status: published
+        '400':
+          description: Job is already published.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: BAD_REQUEST
+                  message:
+                    type: string
+                    example: Job is already published.
+                  data:
+                    example: null
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Job is missing required information — `message` lists what's missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorEnvelope'
+              examples:
+                missing_fields:
+                  value:
+                    status: VALIDATION_ERROR
+                    message: 'Job is not eligible to be published. Missing or invalid: skills - at least one must-have skill (PUT /jobs/:id/skills); interview configuration - at least one question or topic (PUT /jobs/:id/questions or PUT /jobs/:id/topics).'
+                    data: null
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X POST "https://api.hyrefast.ai/external/api/v1/jobs/job_abc123/publish" \
+              -H "X-API-Key: YOUR_API_KEY"
+        - lang: JavaScript
+          source: |
+            const response = await fetch(
+              `${BASE_URL}/external/api/v1/jobs/${JOB_ID}/publish`,
+              { method: 'POST', headers: { 'X-API-Key': API_KEY } },
+            );
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.post(
+                f"{BASE_URL}/external/api/v1/jobs/{JOB_ID}/publish",
+                headers={"X-API-Key": API_KEY},
+            )
+            data = response.json()["data"]
+
+  # ── 7. Delete Job ─────────────────────────────
+  /external/api/v1/jobs/softDelete/{jobId}:
+    put:
+      operationId: softDeleteJob
+      tags: [Jobs]
+      summary: Delete Job
+      description: Deletes a job. It no longer appears in `POST /jobs/list`.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Job deleted successfully.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/JobData'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X PUT "https://api.hyrefast.ai/external/api/v1/jobs/softDelete/job_abc123" \
+              -H "X-API-Key: YOUR_API_KEY"
+        - lang: JavaScript
+          source: |
+            const response = await fetch(
+              `${BASE_URL}/external/api/v1/jobs/softDelete/${JOB_ID}`,
+              { method: 'PUT', headers: { 'X-API-Key': API_KEY } },
+            );
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.put(
+                f"{BASE_URL}/external/api/v1/jobs/softDelete/{JOB_ID}",
+                headers={"X-API-Key": API_KEY},
+            )
+            data = response.json()["data"]
+
+  # ── 8. Create Application ────────────────────
+  /external/api/v1/applications/create:
     post:
       operationId: createApplication
       tags: [Applications]
       summary: Create an application
       description: |
         Creates an application for a job in your workspace, finding or creating the candidate by email.
-        Optionally, the candidate can be emailed their private interview link in the same call.
+        `job`, `email`, `name`, and `number` are all required; any other field is rejected with `422`.
       requestBody:
         required: true
         content:
@@ -482,19 +1811,13 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateApplicationRequest'
             examples:
-              send_interview:
-                summary: Apply candidate and send interview link
+              full_example:
+                summary: Full example
                 value:
-                  jobId: job_abc123
-                  candidateEmail: john@example.com
-                  candidateName: John Doe
-                  candidatePhone: '+919876543210'
-                  sendInterviewLink: true
-              minimal:
-                summary: Minimal — just the required fields
-                value:
-                  jobId: job_abc123
-                  candidateEmail: john@example.com
+                  job: job_abc123
+                  email: john@example.com
+                  name: John Doe
+                  number: '+919876543210'
       responses:
         '200':
           description: Application created successfully.
@@ -514,20 +1837,26 @@ paths:
                     message: Your request is successfully executed
                     data:
                       id: app_xyz789
-                      jobId: job_abc123
+                      job: { id: job_abc123, title: Senior Python Developer }
                       candidate:
                         name: John Doe
                         email: john@example.com
-                      status: created
-                      created_at: 2026-08-01T10:05:00Z
-                record_not_found:
-                  summary: jobId not found in your workspace
+                      status: interview_link_not_sent
+                      createdAt: 2026-08-01T10:05:00Z
+        '404':
+          description: '`job` does not exist in your workspace.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotFoundEnvelope'
+              examples:
+                job_not_found:
                   value:
-                    status: RECORD_NOT_FOUND
+                    status: NOT_FOUND
                     message: Job not found
                     data: null
         '422':
-          description: Validation error — missing or invalid `jobId` or `candidateEmail`.
+          description: Validation error — missing or invalid `job`, `email`, `name`, or `number`.
           content:
             application/json:
               schema:
@@ -541,28 +1870,28 @@ paths:
       x-codeSamples:
         - lang: cURL
           source: |
-            curl -X POST "https://api.hyrefast.ai/external/api/v1/applications" \
+            curl -X POST "https://api.hyrefast.ai/external/api/v1/applications/create" \
               -H "X-API-Key: YOUR_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{
-                "jobId": "job_abc123",
-                "candidateEmail": "john@example.com",
-                "candidateName": "John Doe",
-                "sendInterviewLink": true
+                "job": "job_abc123",
+                "email": "john@example.com",
+                "name": "John Doe",
+                "number": "+919876543210"
               }'
         - lang: JavaScript
           source: |
-            const response = await fetch(`${BASE_URL}/external/api/v1/applications`, {
+            const response = await fetch(`${BASE_URL}/external/api/v1/applications/create`, {
               method: 'POST',
               headers: {
                 'X-API-Key': API_KEY,
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
-                jobId: JOB_ID,
-                candidateEmail: CANDIDATE_EMAIL,
-                candidateName: CANDIDATE_NAME,
-                sendInterviewLink: true,
+                job: JOB_ID,
+                email: CANDIDATE_EMAIL,
+                name: CANDIDATE_NAME,
+                number: CANDIDATE_PHONE,
               }),
             });
             const { data } = await response.json();
@@ -571,23 +1900,252 @@ paths:
             import requests
 
             response = requests.post(
-                f"{BASE_URL}/external/api/v1/applications",
+                f"{BASE_URL}/external/api/v1/applications/create",
                 headers={"X-API-Key": API_KEY},
                 json={
-                    "jobId": JOB_ID,
-                    "candidateEmail": CANDIDATE_EMAIL,
-                    "candidateName": CANDIDATE_NAME,
-                    "sendInterviewLink": True,
+                    "job": JOB_ID,
+                    "email": CANDIDATE_EMAIL,
+                    "name": CANDIDATE_NAME,
+                    "number": CANDIDATE_PHONE,
                 },
             )
             data = response.json()["data"]
 
-  # ── 3. Send Interview Invitation ─────────────
+  # ── 9. List Applications ──────────────────────
+  /external/api/v1/applications/list:
+    post:
+      operationId: listApplications
+      tags: [Applications]
+      summary: List applications
+      description: |
+        Paginated list of applications owned by your workspace, most recent first. Filterable only by
+        `name` and `_id` — any other field in `query` is rejected with `422`. Always scoped to your
+        workspace; if `query` is omitted, every application in your workspace is returned.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ListApplicationsRequestBody'
+            examples:
+              search_by_name:
+                summary: Search by candidate name
+                value:
+                  query: { name: John }
+                  options: { page: 1, limit: 20 }
+              filter_by_id:
+                summary: Filter to a single application
+                value:
+                  query: { _id: app_xyz789 }
+      responses:
+        '200':
+          description: |
+            Applications matched, or an empty result. `data` is an `ApplicationListData` object when
+            applications are found, a `CountOnlyData` object (`{ "totalRecords": N }`) when
+            `isCountOnly: true`, or `null` (with `status: RECORD_NOT_FOUND`) when the query matches nothing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessEnvelope'
+              examples:
+                success:
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      data:
+                        - id: app_xyz789
+                          job:
+                            { id: job_abc123, title: Senior Python Developer }
+                          candidate: { name: John Doe, email: john@example.com }
+                          status: interview_link_not_sent
+                      currentPage: 1
+                      perPage: 20
+                      itemCount: 1
+                      pageCount: 1
+                empty:
+                  summary: No applications matched the query
+                  value:
+                    status: RECORD_NOT_FOUND
+                    message: recordNotFound
+                    data: null
+        '422':
+          description: Validation error — invalid `query` or `options` field.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X POST "https://api.hyrefast.ai/external/api/v1/applications/list" \
+              -H "X-API-Key: YOUR_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{ "query": { "name": "John" }, "options": { "page": 1, "limit": 20 } }'
+        - lang: JavaScript
+          source: |
+            const response = await fetch(`${BASE_URL}/external/api/v1/applications/list`, {
+              method: 'POST',
+              headers: {
+                'X-API-Key': API_KEY,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                query: { name: 'John' },
+                options: { page: 1, limit: 20 },
+              }),
+            });
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.post(
+                f"{BASE_URL}/external/api/v1/applications/list",
+                headers={"X-API-Key": API_KEY},
+                json={"query": {"name": "John"}, "options": {"page": 1, "limit": 20}},
+            )
+            data = response.json()["data"]
+
+  # ── 10. Update Application ────────────────────
+  /external/api/v1/applications/update/{applicationId}:
+    put:
+      operationId: updateApplication
+      tags: [Applications]
+      summary: Update application
+      description: |
+        Updates the candidate's name on an existing application. `name` is the only editable field via
+        this API for now; any other field is rejected with `422`.
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateApplicationRequest'
+            examples:
+              rename:
+                value:
+                  name: John Doe
+      responses:
+        '200':
+          description: Application updated successfully.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ApplicationData'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Validation error — `name` is missing, or a field other than `name` was sent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X PUT "https://api.hyrefast.ai/external/api/v1/applications/update/app_xyz789" \
+              -H "X-API-Key: YOUR_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{ "name": "John Doe" }'
+        - lang: JavaScript
+          source: |
+            const response = await fetch(
+              `${BASE_URL}/external/api/v1/applications/update/${APPLICATION_ID}`,
+              {
+                method: 'PUT',
+                headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: 'John Doe' }),
+              },
+            );
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.put(
+                f"{BASE_URL}/external/api/v1/applications/update/{APPLICATION_ID}",
+                headers={"X-API-Key": API_KEY},
+                json={"name": "John Doe"},
+            )
+            data = response.json()["data"]
+
+  # ── 11. Delete Application ────────────────────
+  /external/api/v1/applications/softDelete/{applicationId}:
+    put:
+      operationId: softDeleteApplication
+      tags: [Applications]
+      summary: Delete Application
+      description: Deletes an application. It no longer appears in `POST /applications/list`.
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+      responses:
+        '200':
+          description: Application deleted successfully.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ApplicationData'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X PUT "https://api.hyrefast.ai/external/api/v1/applications/softDelete/app_xyz789" \
+              -H "X-API-Key: YOUR_API_KEY"
+        - lang: JavaScript
+          source: |
+            const response = await fetch(
+              `${BASE_URL}/external/api/v1/applications/softDelete/${APPLICATION_ID}`,
+              { method: 'PUT', headers: { 'X-API-Key': API_KEY } },
+            );
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.put(
+                f"{BASE_URL}/external/api/v1/applications/softDelete/{APPLICATION_ID}",
+                headers={"X-API-Key": API_KEY},
+            )
+            data = response.json()["data"]
+
+  # ── 12. Send Interview Link ───────────────────
   /external/api/v1/applications/{applicationId}/send-interview:
     post:
-      operationId: sendInterviewInvitation
+      operationId: sendInterviewLink
       tags: [Interviews]
-      summary: Send interview invitation
+      summary: Send interview link
       description: Sends (or re-sends) the interview invitation email for an application in your workspace.
       parameters:
         - $ref: '#/components/parameters/ApplicationId'
@@ -613,12 +2171,8 @@ paths:
                       applicationId: app_xyz789
                       status: sent
                       created_at: 2026-08-01T10:10:00Z
-                record_not_found:
-                  summary: applicationId not found in your workspace
-                  value:
-                    status: RECORD_NOT_FOUND
-                    message: Application not found
-                    data: null
+        '404':
+          $ref: '#/components/responses/NotFound'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '429':
@@ -651,12 +2205,12 @@ paths:
             )
             data = response.json()["data"]
 
-  # ── 4. Copy Interview Link ───────────────────
+  # ── 13. Generate Interview Link ───────────────
   /external/api/v1/applications/{applicationId}/interview-link:
     post:
-      operationId: copyInterviewLink
+      operationId: generateInterviewLink
       tags: [Interviews]
-      summary: Copy interview link
+      summary: Generate interview link
       description: |
         Retrieves the private interview link for an application in your workspace **without** emailing it.
         Useful when you want to deliver it through your own notification channel (e.g. your own email
@@ -682,12 +2236,8 @@ paths:
                     message: Your request is successfully executed
                     data:
                       interviewLink: https://hyrefast.ai/interview/ivw_def456?token=abc123
-                record_not_found:
-                  summary: applicationId not found in your workspace
-                  value:
-                    status: RECORD_NOT_FOUND
-                    message: Application not found
-                    data: null
+        '404':
+          $ref: '#/components/responses/NotFound'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '429':
@@ -720,3 +2270,308 @@ paths:
                 headers={"X-API-Key": API_KEY},
             )
             print(response.json()["data"]["interviewLink"])
+
+  # ── 14. Create Webhook ────────────────────────
+  /external/api/v1/webhook-subscription/create:
+    post:
+      operationId: createWebhook
+      tags: [Webhooks]
+      summary: Register a webhook
+      description: |
+        Registers your webhook URL for the workspace. A workspace may register only one — a second
+        attempt while one is already active is rejected. See the Webhooks section above for the event
+        list, payload shape, and how to verify the signature.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWebhookRequest'
+            examples:
+              example:
+                value:
+                  name: Production ATS sync
+                  url: https://api.yourats.com/hooks/hyrefast
+      responses:
+        '200':
+          description: Webhook registered successfully. `secret` is returned only here.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/WebhookCreateData'
+              examples:
+                success:
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      id: whk_qrs321
+                      name: Production ATS sync
+                      url: https://api.yourats.com/hooks/hyrefast
+                      status: active
+                      secret: whsec_5f3a9c1e8b2d4f6a7c0e1b3d5f7a9c1e8b2d4f6a7c0e1b3d5f7a9c1e8b2d4f6a
+                      lastTriggeredAt: null
+                      createdAt: 2026-08-01T10:00:00Z
+        '422':
+          description: Validation error — missing/invalid `name` or `url`, or your workspace already has a registered webhook.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorEnvelope'
+              examples:
+                already_registered:
+                  value:
+                    status: VALIDATION_ERROR
+                    message: This workspace already has a webhook set up. All supported events are sent to it. Please update the existing webhook or delete it before creating a new one.
+                    data: null
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X POST "https://api.hyrefast.ai/external/api/v1/webhook-subscription/create" \
+              -H "X-API-Key: YOUR_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{ "name": "Production ATS sync", "url": "https://api.yourats.com/hooks/hyrefast" }'
+        - lang: JavaScript
+          source: |
+            const response = await fetch(`${BASE_URL}/external/api/v1/webhook-subscription/create`, {
+              method: 'POST',
+              headers: {
+                'X-API-Key': API_KEY,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                name: 'Production ATS sync',
+                url: 'https://api.yourats.com/hooks/hyrefast',
+              }),
+            });
+            const { data } = await response.json();
+            // Store data.secret now - it is not shown again.
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.post(
+                f"{BASE_URL}/external/api/v1/webhook-subscription/create",
+                headers={"X-API-Key": API_KEY},
+                json={"name": "Production ATS sync", "url": "https://api.yourats.com/hooks/hyrefast"},
+            )
+            data = response.json()["data"]
+            # Store data["secret"] now - it is not shown again.
+
+  # ── 15. Get Webhook ───────────────────────────
+  /external/api/v1/webhook-subscription:
+    get:
+      operationId: getWebhook
+      tags: [Webhooks]
+      summary: Get Registered Webhook
+      description: |
+        Returns the workspace's registered webhook, if one exists. Each workspace can have at most one
+        registered webhook, so this endpoint returns the webhook directly rather than as a paginated
+        list. No request body is required.
+      responses:
+        '200':
+          description: |
+            Your webhook registration, or `status: RECORD_NOT_FOUND` (still `HTTP 200`) if none is registered yet.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessEnvelope'
+              examples:
+                success:
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      id: whk_qrs321
+                      name: Production ATS sync
+                      url: https://api.yourats.com/hooks/hyrefast
+                      status: active
+                      lastTriggeredAt: 2026-08-01T09:00:00Z
+                      createdAt: 2026-08-01T08:00:00Z
+                not_registered:
+                  summary: No webhook registered yet
+                  value:
+                    status: RECORD_NOT_FOUND
+                    message: recordNotFound
+                    data: null
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X GET "https://api.hyrefast.ai/external/api/v1/webhook-subscription" \
+              -H "X-API-Key: YOUR_API_KEY"
+        - lang: JavaScript
+          source: |
+            const response = await fetch(`${BASE_URL}/external/api/v1/webhook-subscription`, {
+              method: 'GET',
+              headers: { 'X-API-Key': API_KEY },
+            });
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.get(
+                f"{BASE_URL}/external/api/v1/webhook-subscription",
+                headers={"X-API-Key": API_KEY},
+            )
+            data = response.json()["data"]
+
+  # ── 16. Update Webhook ────────────────────────
+  /external/api/v1/webhook-subscription/{webhookId}:
+    put:
+      operationId: updateWebhook
+      tags: [Webhooks]
+      summary: Update webhook
+      description: |
+        Updates the name and/or URL of your webhook registration. `name` and `url` are the only editable
+        fields via this API — any other field (including `status`) is rejected with `422`. Only send the
+        field(s) you want to change.
+      parameters:
+        - $ref: '#/components/parameters/WebhookId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWebhookRequest'
+            examples:
+              rename:
+                summary: Update the registered URL
+                value:
+                  url: https://api.yourats.com/hooks/hyrefast-v2
+      responses:
+        '200':
+          description: 'Webhook updated successfully, or `status: RECORD_NOT_FOUND` (still `HTTP 200`) if `webhookId` doesn''t exist in your workspace.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessEnvelope'
+              examples:
+                success:
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      id: whk_qrs321
+                      name: Production ATS sync
+                      url: https://api.yourats.com/hooks/hyrefast-v2
+                      status: active
+                not_found:
+                  value:
+                    status: RECORD_NOT_FOUND
+                    message: recordNotFound
+                    data: null
+        '422':
+          description: Validation error — missing/invalid `name` or `url`, or a field other than `name`/`url` was sent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X PUT "https://api.hyrefast.ai/external/api/v1/webhook-subscription/whk_qrs321" \
+              -H "X-API-Key: YOUR_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{ "url": "https://api.yourats.com/hooks/hyrefast-v2" }'
+        - lang: JavaScript
+          source: |
+            const response = await fetch(
+              `${BASE_URL}/external/api/v1/webhook-subscription/${WEBHOOK_ID}`,
+              {
+                method: 'PUT',
+                headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: 'https://api.yourats.com/hooks/hyrefast-v2' }),
+              },
+            );
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.put(
+                f"{BASE_URL}/external/api/v1/webhook-subscription/{WEBHOOK_ID}",
+                headers={"X-API-Key": API_KEY},
+                json={"url": "https://api.yourats.com/hooks/hyrefast-v2"},
+            )
+            data = response.json()["data"]
+
+    delete:
+      operationId: deleteWebhook
+      tags: [Webhooks]
+      summary: Delete webhook
+      description: Soft-deletes your webhook registration so it stops receiving events. You can register a new one afterwards.
+      parameters:
+        - $ref: '#/components/parameters/WebhookId'
+      responses:
+        '200':
+          description: 'Webhook deleted successfully, or `status: RECORD_NOT_FOUND` (still `HTTP 200`) if `webhookId` doesn''t exist in your workspace.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessEnvelope'
+              examples:
+                success:
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      id: whk_qrs321
+                      name: Production ATS sync
+                      url: https://api.yourats.com/hooks/hyrefast
+                      status: disabled
+                not_found:
+                  value:
+                    status: RECORD_NOT_FOUND
+                    message: recordNotFound
+                    data: null
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X DELETE "https://api.hyrefast.ai/external/api/v1/webhook-subscription/whk_qrs321" \
+              -H "X-API-Key: YOUR_API_KEY"
+        - lang: JavaScript
+          source: |
+            const response = await fetch(
+              `${BASE_URL}/external/api/v1/webhook-subscription/${WEBHOOK_ID}`,
+              { method: 'DELETE', headers: { 'X-API-Key': API_KEY } },
+            );
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.delete(
+                f"{BASE_URL}/external/api/v1/webhook-subscription/{WEBHOOK_ID}",
+                headers={"X-API-Key": API_KEY},
+            )
+            data = response.json()["data"]
