@@ -964,6 +964,84 @@ components:
           type: string
           format: date-time
 
+    TopicsGenerationJob:
+      type: object
+      properties:
+        jobId:
+          type: string
+          description: |
+            ID of this generation run - not the job's own ID. Pass it to
+            `GET /jobs/topics/generate/status/{jobId}` to poll it.
+          example: 5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b
+        status:
+          type: string
+          enum: [queued, processing, succeeded, failed]
+          example: queued
+        pollAfterMs:
+          type: integer
+          description: Suggested delay, in milliseconds, before your first status poll.
+          example: 2000
+
+    TopicsGenerationResult:
+      type: object
+      description: |
+        Populated on the status response once generation has `succeeded`. Unlike skill generation, this
+        result is **not** saved anywhere automatically - to keep these topics, pass `topicsToFocus` to
+        `PUT /jobs/{jobId}/topics` yourself.
+      properties:
+        topicsToFocus:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopicItem'
+          description: |
+            Normalized topics, parsed server-side from the AI's response - already shaped for
+            `PUT /jobs/{jobId}/topics`.
+
+    TopicsGenerationStatus:
+      type: object
+      properties:
+        jobId:
+          type: string
+          description: ID of this generation run.
+          example: 5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b
+        status:
+          type: string
+          enum: [queued, processing, succeeded, failed]
+          example: succeeded
+        stage:
+          type: string
+          nullable: true
+          example: completed
+        message:
+          type: string
+          nullable: true
+          example: AI Labs config analysis.topics completed.
+        pollAfterMs:
+          type: integer
+          description: Suggested delay, in milliseconds, before your next status poll.
+          example: 2000
+        error:
+          type: string
+          nullable: true
+          description: Populated only when `status` is `failed`.
+        result:
+          nullable: true
+          description: Populated once `status` is `succeeded`; `null` while `queued`/`processing`, and on `failed`.
+          allOf:
+            - $ref: '#/components/schemas/TopicsGenerationResult'
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+
     JobListData:
       type: object
       properties:
@@ -2433,86 +2511,282 @@ paths:
             data = response.json()["data"]
 
   # ── 5b. Update Job Topics ─────────────────────
-  # /external/api/v1/jobs/{jobId}/topics:
-  #   put:
-  #     operationId: updateJobTopics
-  #     tags: [Jobs]
-  #     summary: Update job topics
-  #     description: |
-  #       Sets (full replace) the job's focus/avoid discussion-topic guidance. Send both properties if you
-  #       want to keep existing values in one of them — an omitted property is cleared, not left unchanged.
-  #       The question bank is a separate sub-resource — see `PUT /jobs/{jobId}/questions`.
-  #     parameters:
-  #       - $ref: '#/components/parameters/JobId'
-  #     requestBody:
-  #       required: true
-  #       content:
-  #         application/json:
-  #           schema:
-  #             $ref: '#/components/schemas/UpdateTopicsRequest'
-  #           examples:
-  #             example:
-  #               value:
-  #                 topicsToFocus:
-  #                   - name: System Design
-  #                     discussionMinutes: 15
-  #                 topicsToAvoid: [Salary negotiation]
-  #     responses:
-  #       '200':
-  #         description: Topics updated successfully.
-  #         content:
-  #           application/json:
-  #             schema:
-  #               allOf:
-  #                 - $ref: '#/components/schemas/SuccessEnvelope'
-  #                 - type: object
-  #                   properties:
-  #                     data:
-  #                       $ref: '#/components/schemas/JobTopicsData'
-  #       '404':
-  #         $ref: '#/components/responses/NotFound'
-  #       '422':
-  #         description: Validation error — at least one of `topicsToFocus` / `topicsToAvoid` is required, or a topic is missing its `name`.
-  #         content:
-  #           application/json:
-  #             schema:
-  #               $ref: '#/components/schemas/ValidationErrorEnvelope'
-  #       '401':
-  #         $ref: '#/components/responses/Unauthorized'
-  #       '429':
-  #         $ref: '#/components/responses/RateLimited'
-  #       '500':
-  #         $ref: '#/components/responses/InternalServerError'
-  #     x-codeSamples:
-  #       - lang: cURL
-  #         source: |
-  #           curl -X PUT "https://api.hyrefast.ai/external/api/v1/jobs/job_abc123/topics" \
-  #             -H "X-API-Key: YOUR_API_KEY" \
-  #             -H "Content-Type: application/json" \
-  #             -d '{ "topicsToFocus": [{ "name": "System Design", "discussionMinutes": 15 }] }'
-  #       - lang: JavaScript
-  #         source: |
-  #           const response = await fetch(
-  #             `${BASE_URL}/external/api/v1/jobs/${JOB_ID}/topics`,
-  #             {
-  #               method: 'PUT',
-  #               headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
-  #               body: JSON.stringify({
-  #                 topicsToFocus: [{ name: 'System Design', discussionMinutes: 15 }],
-  #               }),
-  #             },
-  #           );
-  #           const { data } = await response.json();
-  #       - lang: Python
-  #         source: |
-  #           import requests
-  #
-  #           response = requests.put(
-  #               f"{BASE_URL}/external/api/v1/jobs/{JOB_ID}/topics",
-  #               headers={"X-API-Key": API_KEY},
-  #               json={"topicsToFocus": [{"name": "System Design", "discussionMinutes": 15}]},
-  #           )
-  #           data = response.json()["data"]
+  /external/api/v1/jobs/{jobId}/topics:
+    put:
+      operationId: updateJobTopics
+      tags: [Jobs]
+      summary: Update job topics
+      description: |
+        Sets (full replace) the job's focus/avoid discussion-topic guidance. Send both properties if you
+        want to keep existing values in one of them — an omitted property is cleared, not left unchanged.
+        The question bank is a separate sub-resource — see `PUT /jobs/{jobId}/questions`.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTopicsRequest'
+            examples:
+              example:
+                value:
+                  topicsToFocus:
+                    - name: System Design
+                      discussionMinutes: 15
+                  topicsToAvoid: [Salary negotiation]
+      responses:
+        '200':
+          description: Topics updated successfully.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/JobTopicsData'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Validation error — at least one of `topicsToFocus` / `topicsToAvoid` is required, or a topic is missing its `name`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X PUT "https://api.hyrefast.ai/external/api/v1/jobs/job_abc123/topics" \
+              -H "X-API-Key: YOUR_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{ "topicsToFocus": [{ "name": "System Design", "discussionMinutes": 15 }] }'
+        - lang: JavaScript
+          source: |
+            const response = await fetch(
+              `${BASE_URL}/external/api/v1/jobs/${JOB_ID}/topics`,
+              {
+                method: 'PUT',
+                headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  topicsToFocus: [{ name: 'System Design', discussionMinutes: 15 }],
+                }),
+              },
+            );
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.put(
+                f"{BASE_URL}/external/api/v1/jobs/{JOB_ID}/topics",
+                headers={"X-API-Key": API_KEY},
+                json={"topicsToFocus": [{"name": "System Design", "discussionMinutes": 15}]},
+            )
+            data = response.json()["data"]
+
+  # ── 5b1. Generate Job Topics ──────────────────
+  /external/api/v1/jobs/{jobId}/topics/generate:
+    post:
+      operationId: generateJobTopics
+      tags: [Jobs]
+      summary: Generate job topics
+      description: |
+        Triggers Hyrefast's automatic topic-generation AI, clustering this job's accepted skills (from
+        `PUT /jobs/{jobId}/skills` or
+        [`POST /jobs/{jobId}/skills/generate`](#tag/Jobs/operation/generateJobSkills)) into logical interview
+        discussion topics.
+
+        Like question generation, this is **generation-only** — the result is not written back to the job
+        automatically. To keep the generated topics, pass them to
+        [`PUT /jobs/{jobId}/topics`](#tag/Jobs/operation/updateJobTopics) yourself once generation succeeds.
+
+        Generation runs asynchronously and typically takes anywhere from several seconds to a couple of
+        minutes. This call returns immediately with a `jobId` identifying the run - poll
+        [`GET /jobs/topics/generate/status/{jobId}`](#tag/Jobs/operation/getJobTopicsGenerationStatus) with
+        it to check progress and retrieve the result once it succeeds.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Topic generation started.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TopicsGenerationJob'
+              examples:
+                success:
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      jobId: 5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b
+                      status: queued
+                      pollAfterMs: 2000
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X POST "https://api.hyrefast.ai/external/api/v1/jobs/job_abc123/topics/generate" \
+              -H "X-API-Key: YOUR_API_KEY"
+        - lang: JavaScript
+          source: |
+            const response = await fetch(
+              `${BASE_URL}/external/api/v1/jobs/${JOB_ID}/topics/generate`,
+              {
+                method: 'POST',
+                headers: { 'X-API-Key': API_KEY },
+              },
+            );
+            const { data } = await response.json();
+            // data.jobId -> poll GET /jobs/topics/generate/status/{jobId}
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.post(
+                f"{BASE_URL}/external/api/v1/jobs/{JOB_ID}/topics/generate",
+                headers={"X-API-Key": API_KEY},
+            )
+            data = response.json()["data"]
+            # data["jobId"] -> poll GET /jobs/topics/generate/status/{jobId}
+
+  # ── 5b2. Get Job Topics Generation Status ─────
+  /external/api/v1/jobs/topics/generate/status/{jobId}:
+    get:
+      operationId: getJobTopicsGenerationStatus
+      tags: [Jobs]
+      summary: Get job topics generation status
+      description: |
+        Polls the status of a topic-generation run started by
+        [`POST /jobs/{jobId}/topics/generate`](#tag/Jobs/operation/generateJobTopics). Use the returned
+        `pollAfterMs` as the delay before your next poll.
+
+        Unlike the equivalent internal endpoint (which returns the AI's raw text response), `result` here
+        is normalized server-side into `topicsToFocus` items shaped exactly like
+        [`PUT /jobs/{jobId}/topics`](#tag/Jobs/operation/updateJobTopics) expects - no client-side parsing
+        needed.
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: |
+            ID of the generation run, as returned in `jobId` by `POST /jobs/{jobId}/topics/generate` - not
+            the job's own ID.
+          example: 5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b
+      responses:
+        '200':
+          description: Current status of the generation run.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TopicsGenerationStatus'
+              examples:
+                succeeded:
+                  summary: Succeeded
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      jobId: 5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b
+                      status: succeeded
+                      stage: completed
+                      message: AI Labs config analysis.topics completed.
+                      pollAfterMs: 2000
+                      error: null
+                      result:
+                        topicsToFocus:
+                          - name: Backend Systems
+                            skillsUsed: [Node.js, MongoDB]
+                            reason: Core backend stack for this role.
+                            discussionMinutes: 8
+                            sampleQuestions:
+                              - How have you applied Node.js in a real project?
+                              - What trade-offs do you consider when working with MongoDB?
+                      createdAt: 2026-08-01T10:00:00Z
+                      startedAt: 2026-08-01T10:00:01Z
+                      completedAt: 2026-08-01T10:02:30Z
+                queued:
+                  summary: Still queued
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      jobId: 5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b
+                      status: queued
+                      stage: queued
+                      message: Queued AI Labs config run for analysis.topics.
+                      pollAfterMs: 2000
+                      error: null
+                      result: null
+                      createdAt: 2026-08-01T10:00:00Z
+                      startedAt: null
+                      completedAt: null
+        '404':
+          description: The referenced generation `jobId` doesn't exist, or has expired (runs are retained for 30 minutes after completion).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotFoundEnvelope'
+        '403':
+          description: The referenced generation run belongs to a different workspace than your API key's.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnauthorizedEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X GET "https://api.hyrefast.ai/external/api/v1/jobs/topics/generate/status/5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b" \
+              -H "X-API-Key: YOUR_API_KEY"
+        - lang: JavaScript
+          source: |
+            const response = await fetch(
+              `${BASE_URL}/external/api/v1/jobs/topics/generate/status/${RUN_ID}`,
+              { headers: { 'X-API-Key': API_KEY } },
+            );
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.get(
+                f"{BASE_URL}/external/api/v1/jobs/topics/generate/status/{RUN_ID}",
+                headers={"X-API-Key": API_KEY},
+            )
+            data = response.json()["data"]
 
   # ── 6. Publish Job ────────────────────────────
   /external/api/v1/jobs/{jobId}/publish:
