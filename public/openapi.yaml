@@ -20,6 +20,8 @@ info:
     url: https://hyrefast.ai/terms
 
 servers:
+  - url: http://localhost:6365
+    description: localhost — use for testing your integration before going live
   - url: https://staging-api.hyrefast.ai
     description: Staging — use for testing your integration before going live
   - url: https://api.hyrefast.ai
@@ -444,6 +446,13 @@ components:
           format: date
           description: Application deadline, as `YYYY-MM-DD`.
           example: '2026-09-15'
+        jd_doc:
+          type: string
+          format: uri
+          description: |
+            URL of the job description document, obtained from
+            `POST /documents/upload` (`type: "jd"`).
+          example: https://your-bucket.s3.amazonaws.com/workspaces/w1/external-uploads/jd/1699999999-a1b2c3.pdf
 
     UpdateJobRequest:
       type: object
@@ -488,6 +497,12 @@ components:
           format: date
           description: Application deadline, as `YYYY-MM-DD`.
           example: '2026-09-15'
+        jd_doc:
+          type: string
+          format: uri
+          description: |
+            URL of the job description document, obtained from
+            `POST /documents/upload` (`type: "jd"`).
 
     UpdateSkillsRequest:
       type: object
@@ -543,7 +558,9 @@ components:
     CreateApplicationRequest:
       type: object
       required: [job, email, name, number]
-      description: All four fields are required. Any other field is rejected with `422`.
+      description: |
+        `job`, `email`, `name`, and `number` are required. `resume` is optional. Any other field is
+        rejected with `422`.
       properties:
         job:
           type: string
@@ -560,6 +577,12 @@ components:
         number:
           type: string
           example: '+919876543210'
+        resume:
+          type: string
+          format: uri
+          description: |
+            URL of the candidate's resume, obtained from `POST /documents/upload` (`type: "resume"`).
+          example: https://your-bucket.s3.amazonaws.com/workspaces/w1/external-uploads/resumes/1699999999-d4e5f6.pdf
 
     UpdateApplicationRequest:
       type: object
@@ -573,6 +596,31 @@ components:
           example: John Doe
 
     # ── Response data schemas ───────────────────
+
+    UploadDocumentData:
+      type: object
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Public URL of the uploaded file. Pass this as `resume` or `jd_doc` on the create calls.
+          example: https://your-bucket.s3.amazonaws.com/workspaces/w1/external-uploads/resumes/1699999999-d4e5f6.pdf
+        key:
+          type: string
+          description: S3 object key.
+        fileName:
+          type: string
+          description: Original filename as uploaded.
+          example: resume.pdf
+        fileSize:
+          type: integer
+          example: 245678
+        mimeType:
+          type: string
+          example: application/pdf
+        type:
+          type: string
+          enum: [resume, jd]
 
     JobData:
       type: object
@@ -597,6 +645,11 @@ components:
           type: string
         work_type:
           type: string
+        jd_doc:
+          type: string
+          format: uri
+          nullable: true
+          description: URL of the job description document, if one was provided.
         publicationStatus:
           type: string
           enum:
@@ -741,6 +794,11 @@ components:
             title:
               type: string
               example: Senior Python Developer
+        resume:
+          type: string
+          format: uri
+          nullable: true
+          description: URL of the candidate's resume, if one was provided.
         status:
           type: string
           example: interview_link_not_sent
@@ -960,6 +1018,10 @@ components:
 # Tags
 # ─────────────────────────────────────────────
 tags:
+  - name: Documents
+    description: |
+      Upload resume and job description files ahead of creating an application or job, then reference
+      the returned URL in the create call.
   - name: Jobs
     description: Create and manage job postings in your workspace.
   - name: Applications
@@ -1110,6 +1172,104 @@ tags:
 # Paths
 # ─────────────────────────────────────────────
 paths:
+  # ── 0. Upload Document ───────────────────────
+  /external/api/v1/documents/upload:
+    post:
+      operationId: uploadDocument
+      tags: [Documents]
+      summary: Upload a resume or JD document
+      description: |
+        Uploads a resume or job description file to Hyrefast's S3 bucket and returns its URL. Use that
+        URL as `resume` on [`POST /applications/create`](#tag/Applications/operation/createApplication)
+        or as `jd_doc` on [`POST /jobs/create`](#tag/Jobs/operation/createJob).
+
+        Accepts PDF, DOC, and DOCX files up to 10MB, sent as `multipart/form-data`.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, type]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The resume or JD file (PDF, DOC, or DOCX; max 10MB).
+                type:
+                  type: string
+                  enum: [resume, jd]
+                  description: What kind of document this is - determines where it's stored.
+      responses:
+        '200':
+          description: File uploaded successfully.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/UploadDocumentData'
+              examples:
+                success:
+                  value:
+                    status: SUCCESS
+                    message: File uploaded successfully
+                    data:
+                      url: https://your-bucket.s3.amazonaws.com/workspaces/w1/external-uploads/resumes/1699999999-d4e5f6.pdf
+                      key: workspaces/w1/external-uploads/resumes/1699999999-d4e5f6.pdf
+                      fileName: resume.pdf
+                      fileSize: 245678
+                      mimeType: application/pdf
+                      type: resume
+        '400':
+          description: Missing file, missing/invalid `type`, file too large, or an unsupported file type.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X POST "https://api.hyrefast.ai/external/api/v1/documents/upload" \
+              -H "X-API-Key: YOUR_API_KEY" \
+              -F "file=@/path/to/resume.pdf" \
+              -F "type=resume"
+        - lang: JavaScript
+          source: |
+            const form = new FormData();
+            form.append('file', fileBlob, 'resume.pdf');
+            form.append('type', 'resume');
+
+            const response = await fetch(`${BASE_URL}/external/api/v1/documents/upload`, {
+              method: 'POST',
+              headers: { 'X-API-Key': API_KEY },
+              body: form,
+            });
+            const { data } = await response.json();
+            // data.url -> pass as `resume` on POST /applications/create
+        - lang: Python
+          source: |
+            import requests
+
+            with open('resume.pdf', 'rb') as f:
+                response = requests.post(
+                    f"{BASE_URL}/external/api/v1/documents/upload",
+                    headers={"X-API-Key": API_KEY},
+                    files={"file": f},
+                    data={"type": "resume"},
+                )
+            data = response.json()["data"]
+            # data["url"] -> pass as `resume` on POST /applications/create
+
   # ── 1. Create Job ────────────────────────────
   /external/api/v1/jobs/create:
     post:
@@ -1137,6 +1297,15 @@ paths:
                   salary_min: '1000000'
                   salary_max: '1500000'
                   last_date: '2026-09-15'
+                  jd_doc: ''
+              with_jd_document:
+                summary: With a JD document attached
+                description: |
+                  Upload the JD file first via `POST /documents/upload` (`type: "jd"`), then pass the
+                  returned URL as `jd_doc` here.
+                value:
+                  title: Senior Python Developer
+                  jd_doc: https://your-bucket.s3.amazonaws.com/workspaces/w1/external-uploads/jd/1699999999-a1b2c3.pdf
       responses:
         '200':
           description: Job created successfully (as a draft).
@@ -1796,7 +1965,8 @@ paths:
       summary: Create an application
       description: |
         Creates an application for a job in your workspace, finding or creating the candidate by email.
-        `job`, `email`, `name`, and `number` are all required; any other field is rejected with `422`.
+        `job`, `email`, `name`, and `number` are all required; `resume` is optional; any other field is
+        rejected with `422`.
       requestBody:
         required: true
         content:
@@ -1811,6 +1981,18 @@ paths:
                   email: john@example.com
                   name: John Doe
                   number: '+919876543210'
+                  resume: ''
+              with_resume:
+                summary: With a resume attached
+                description: |
+                  Upload the resume file first via `POST /documents/upload` (`type: "resume"`), then pass
+                  the returned URL as `resume` here.
+                value:
+                  job: job_abc123
+                  email: john@example.com
+                  name: John Doe
+                  number: '+919876543210'
+                  resume: https://your-bucket.s3.amazonaws.com/workspaces/w1/external-uploads/resumes/1699999999-d4e5f6.pdf
       responses:
         '200':
           description: Application created successfully.
