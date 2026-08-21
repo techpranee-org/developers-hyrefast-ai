@@ -831,6 +831,116 @@ components:
           type: string
           format: date-time
 
+    QuestionsGenerationJob:
+      type: object
+      properties:
+        jobId:
+          type: string
+          description: |
+            ID of this generation run - not the job's own ID. Pass it to
+            `GET /jobs/questions/generate/status/{jobId}` to poll it.
+          example: 3c2f9d6a-1b4e-4f8a-9c3d-2e5f7a8b9c0d
+        status:
+          type: string
+          enum: [queued, processing, succeeded, failed]
+          example: queued
+        pollAfterMs:
+          type: integer
+          description: Suggested delay, in milliseconds, before your first status poll.
+          example: 2000
+
+    QuestionsGenerationResult:
+      type: object
+      description: |
+        Populated on the status response once generation has `succeeded`. Unlike skill generation, this
+        result is **not** saved anywhere automatically - to keep these questions, pass `questions` to
+        `PUT /jobs/{jobId}/questions` yourself.
+      properties:
+        questions:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionItem'
+          description: |
+            Generated questions. `order` and `question_type` aren't populated by generation - if you persist
+            this list via `PUT /jobs/{jobId}/questions`, set `order` from each item's array index first, or
+            every item will default to `order: 1` there.
+        skillCoverageReport:
+          type: object
+          nullable: true
+          description: Diagnostic report on how well the generated questions cover the job's required skills.
+        context:
+          type: object
+          properties:
+            jobTitle:
+              type: string
+            jobDescription:
+              type: string
+            employmentType:
+              type: string
+            requirements:
+              type: array
+              items:
+                type: string
+        generatedAt:
+          type: string
+          format: date-time
+        configUsed:
+          type: object
+          nullable: true
+          properties:
+            model:
+              type: string
+            provider:
+              type: string
+        workflowDiagnostics:
+          type: object
+          nullable: true
+
+    QuestionsGenerationStatus:
+      type: object
+      properties:
+        jobId:
+          type: string
+          description: ID of this generation run.
+          example: 3c2f9d6a-1b4e-4f8a-9c3d-2e5f7a8b9c0d
+        status:
+          type: string
+          enum: [queued, processing, succeeded, failed]
+          example: succeeded
+        stage:
+          type: string
+          nullable: true
+          example: completed
+        message:
+          type: string
+          nullable: true
+          example: Interview question generation completed.
+        pollAfterMs:
+          type: integer
+          description: Suggested delay, in milliseconds, before your next status poll.
+          example: 2000
+        error:
+          type: string
+          nullable: true
+          description: Populated only when `status` is `failed`.
+        result:
+          nullable: true
+          description: Populated once `status` is `succeeded`; `null` while `queued`/`processing`, and on `failed`.
+          allOf:
+            - $ref: '#/components/schemas/QuestionsGenerationResult'
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+
     JobTopicsData:
       type: object
       properties:
@@ -2118,6 +2228,207 @@ paths:
                 f"{BASE_URL}/external/api/v1/jobs/{JOB_ID}/questions",
                 headers={"X-API-Key": API_KEY},
                 json={"questions": [{"title": "Describe a time you optimized a slow query."}]},
+            )
+            data = response.json()["data"]
+
+  # ── 5a1. Generate Job Questions ───────────────
+  /external/api/v1/jobs/{jobId}/questions/generate:
+    post:
+      operationId: generateJobQuestions
+      tags: [Jobs]
+      summary: Generate job questions
+      description: |
+        Triggers Hyrefast's automatic interview-question-generation AI, using this job's title,
+        description, and accepted skills (from `PUT /jobs/{jobId}/skills` or
+        [`POST /jobs/{jobId}/skills/generate`](#tag/Jobs/operation/generateJobSkills)) to produce a set of
+        interview questions.
+
+        Unlike skill generation, this is **generation-only** — the result is not written back to the job
+        automatically. To keep the generated questions, pass them to
+        [`PUT /jobs/{jobId}/questions`](#tag/Jobs/operation/updateJobQuestions) yourself once generation
+        succeeds.
+
+        Generation runs asynchronously and typically takes anywhere from several seconds to a couple of
+        minutes. This call returns immediately with a `jobId` identifying the run - poll
+        [`GET /jobs/questions/generate/status/{jobId}`](#tag/Jobs/operation/getJobQuestionsGenerationStatus)
+        with it to check progress and retrieve the result once it succeeds.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Question generation started.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/QuestionsGenerationJob'
+              examples:
+                success:
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      jobId: 3c2f9d6a-1b4e-4f8a-9c3d-2e5f7a8b9c0d
+                      status: queued
+                      pollAfterMs: 2000
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X POST "https://api.hyrefast.ai/external/api/v1/jobs/job_abc123/questions/generate" \
+              -H "X-API-Key: YOUR_API_KEY"
+        - lang: JavaScript
+          source: |
+            const response = await fetch(
+              `${BASE_URL}/external/api/v1/jobs/${JOB_ID}/questions/generate`,
+              {
+                method: 'POST',
+                headers: { 'X-API-Key': API_KEY },
+              },
+            );
+            const { data } = await response.json();
+            // data.jobId -> poll GET /jobs/questions/generate/status/{jobId}
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.post(
+                f"{BASE_URL}/external/api/v1/jobs/{JOB_ID}/questions/generate",
+                headers={"X-API-Key": API_KEY},
+            )
+            data = response.json()["data"]
+            # data["jobId"] -> poll GET /jobs/questions/generate/status/{jobId}
+
+  # ── 5a2. Get Job Questions Generation Status ──
+  /external/api/v1/jobs/questions/generate/status/{jobId}:
+    get:
+      operationId: getJobQuestionsGenerationStatus
+      tags: [Jobs]
+      summary: Get job questions generation status
+      description: |
+        Polls the status of a question-generation run started by
+        [`POST /jobs/{jobId}/questions/generate`](#tag/Jobs/operation/generateJobQuestions). Use the
+        returned `pollAfterMs` as the delay before your next poll.
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: |
+            ID of the generation run, as returned in `jobId` by `POST /jobs/{jobId}/questions/generate` -
+            not the job's own ID.
+          example: 3c2f9d6a-1b4e-4f8a-9c3d-2e5f7a8b9c0d
+      responses:
+        '200':
+          description: Current status of the generation run.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/QuestionsGenerationStatus'
+              examples:
+                succeeded:
+                  summary: Succeeded
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      jobId: 3c2f9d6a-1b4e-4f8a-9c3d-2e5f7a8b9c0d
+                      status: succeeded
+                      stage: completed
+                      message: Interview question generation completed.
+                      pollAfterMs: 2000
+                      error: null
+                      result:
+                        questions:
+                          - title: Describe a time you optimized a slow query.
+                            topic_name: Databases
+                            question_proficiency: L3
+                            key_aspects_to_be_covered: [indexing, query planning]
+                            skills_covered: [SQL]
+                        skillCoverageReport: null
+                        context:
+                          jobTitle: Senior Python Developer
+                          jobDescription: We are looking for an experienced Python developer...
+                          employmentType: Full-time
+                          requirements: []
+                        generatedAt: 2026-08-01T10:02:30Z
+                        configUsed:
+                          model: gpt-4o
+                          provider: openai
+                        workflowDiagnostics: null
+                      createdAt: 2026-08-01T10:00:00Z
+                      startedAt: 2026-08-01T10:00:01Z
+                      completedAt: 2026-08-01T10:02:30Z
+                queued:
+                  summary: Still queued
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      jobId: 3c2f9d6a-1b4e-4f8a-9c3d-2e5f7a8b9c0d
+                      status: queued
+                      stage: queued
+                      message: Queued for interview question generation.
+                      pollAfterMs: 2000
+                      error: null
+                      result: null
+                      createdAt: 2026-08-01T10:00:00Z
+                      startedAt: null
+                      completedAt: null
+        '404':
+          description: The referenced generation `jobId` doesn't exist, or has expired (runs are retained for 30 minutes after completion).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotFoundEnvelope'
+        '403':
+          description: The referenced generation run belongs to a different workspace than your API key's.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnauthorizedEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X GET "https://api.hyrefast.ai/external/api/v1/jobs/questions/generate/status/3c2f9d6a-1b4e-4f8a-9c3d-2e5f7a8b9c0d" \
+              -H "X-API-Key: YOUR_API_KEY"
+        - lang: JavaScript
+          source: |
+            const response = await fetch(
+              `${BASE_URL}/external/api/v1/jobs/questions/generate/status/${RUN_ID}`,
+              { headers: { 'X-API-Key': API_KEY } },
+            );
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.get(
+                f"{BASE_URL}/external/api/v1/jobs/questions/generate/status/{RUN_ID}",
+                headers={"X-API-Key": API_KEY},
             )
             data = response.json()["data"]
 
