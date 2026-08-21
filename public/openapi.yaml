@@ -697,6 +697,23 @@ components:
           format: date-time
           example: 2026-08-01T10:00:00Z
 
+    JobConversationModeData:
+      type: object
+      properties:
+        id:
+          type: string
+          example: job_abc123
+        interviewModes:
+          type: object
+          properties:
+            standard:
+              type: boolean
+              example: true
+            conversation:
+              type: boolean
+              nullable: true
+              example: true
+
     JobSkillsData:
       type: object
       properties:
@@ -2875,6 +2892,183 @@ paths:
 
             response = requests.post(
                 f"{BASE_URL}/external/api/v1/jobs/{JOB_ID}/publish",
+                headers={"X-API-Key": API_KEY},
+            )
+            data = response.json()["data"]
+
+  # ── 6a. Enable Job Conversation Mode ──────────
+  /external/api/v1/jobs/{jobId}/conversation-mode/enable:
+    post:
+      operationId: enableJobConversationMode
+      tags: [Jobs]
+      summary: Enable job conversation mode
+      description: |
+        Enables conversation-mode interviews for a job. Validates the job has at least one topic
+        configured first (`topics.topicToFocusIds`, via
+        [`PUT /jobs/{jobId}/topics`](#tag/Jobs/operation/updateJobTopics) or
+        [`POST /jobs/{jobId}/topics/generate`](#tag/Jobs/operation/generateJobTopics)) - conversation mode
+        has nothing to hold a discussion around otherwise. If none are configured, returns `422` instead
+        of enabling.
+
+        This is a separate action from
+        [disabling conversation mode](#tag/Jobs/operation/disableJobConversationMode) rather than a single
+        toggle, since only enabling carries this validation.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Conversation mode enabled successfully.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/JobConversationModeData'
+              examples:
+                success:
+                  value:
+                    status: SUCCESS
+                    message: Conversation mode enabled successfully.
+                    data:
+                      id: job_abc123
+                      interviewModes:
+                        standard: true
+                        conversation: true
+        '400':
+          description: Conversation mode is already enabled.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: BAD_REQUEST
+                  message:
+                    type: string
+                    example: Conversation mode is already enabled.
+                  data:
+                    example: null
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Job is missing required information — `message` lists what's missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorEnvelope'
+              examples:
+                missing_topics:
+                  value:
+                    status: VALIDATION_ERROR
+                    message: 'Job is not eligible for conversation mode. Missing or invalid: topics - at least one topic (PUT /jobs/:id/topics or POST /jobs/:id/topics/generate).'
+                    data: null
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X POST "https://api.hyrefast.ai/external/api/v1/jobs/job_abc123/conversation-mode/enable" \
+              -H "X-API-Key: YOUR_API_KEY"
+        - lang: JavaScript
+          source: |
+            const response = await fetch(
+              `${BASE_URL}/external/api/v1/jobs/${JOB_ID}/conversation-mode/enable`,
+              { method: 'POST', headers: { 'X-API-Key': API_KEY } },
+            );
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.post(
+                f"{BASE_URL}/external/api/v1/jobs/{JOB_ID}/conversation-mode/enable",
+                headers={"X-API-Key": API_KEY},
+            )
+            data = response.json()["data"]
+
+  # ── 6b. Disable Job Conversation Mode ─────────
+  /external/api/v1/jobs/{jobId}/conversation-mode/disable:
+    post:
+      operationId: disableJobConversationMode
+      tags: [Jobs]
+      summary: Disable job conversation mode
+      description: |
+        Disables conversation-mode interviews for a job. Unlike
+        [enabling](#tag/Jobs/operation/enableJobConversationMode), this has no eligibility requirement -
+        turning the mode off never needs the preconditions turning it on does.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Conversation mode disabled successfully.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/JobConversationModeData'
+              examples:
+                success:
+                  value:
+                    status: SUCCESS
+                    message: Conversation mode disabled successfully.
+                    data:
+                      id: job_abc123
+                      interviewModes:
+                        standard: true
+                        conversation: false
+        '400':
+          description: Conversation mode is already disabled.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: BAD_REQUEST
+                  message:
+                    type: string
+                    example: Conversation mode is already disabled.
+                  data:
+                    example: null
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X POST "https://api.hyrefast.ai/external/api/v1/jobs/job_abc123/conversation-mode/disable" \
+              -H "X-API-Key: YOUR_API_KEY"
+        - lang: JavaScript
+          source: |
+            const response = await fetch(
+              `${BASE_URL}/external/api/v1/jobs/${JOB_ID}/conversation-mode/disable`,
+              { method: 'POST', headers: { 'X-API-Key': API_KEY } },
+            );
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.post(
+                f"{BASE_URL}/external/api/v1/jobs/{JOB_ID}/conversation-mode/disable",
                 headers={"X-API-Key": API_KEY},
             )
             data = response.json()["data"]
