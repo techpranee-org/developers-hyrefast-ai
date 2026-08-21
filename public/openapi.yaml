@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Hyrefast API
-  version: 1.1.0
+  version: 1.0.0
   summary: Integration API for external clients to create jobs, submit candidate applications, and manage interview invitations in Hyrefast.
   description: |
     The Hyrefast API lets your application create jobs, submit candidate applications, and manage interview
@@ -11,11 +11,6 @@ info:
     that need to push jobs and candidates into Hyrefast and trigger interview delivery.
 
     All requests are authenticated with a single API key and return a consistent JSON response envelope.
-
-    **v1.1 change:** `POST /jobs/create` now creates the job as a **draft** instead of publishing it
-    immediately. Add skills (`PUT /jobs/{jobId}/skills`), interview questions (`PUT /jobs/{jobId}/questions`),
-    and/or topic guidance (`PUT /jobs/{jobId}/topics`), then call `POST /jobs/{jobId}/publish` when the job
-    is ready to go live — publish validates the job has the required information first.
   contact:
     name: Hyrefast Support
     email: support@hyrefast.ai
@@ -25,8 +20,6 @@ info:
     url: https://hyrefast.ai/terms
 
 servers:
-  - url: http://localhost:6365
-    description: Localhost — use for testing your integration before going live
   - url: https://staging-api.hyrefast.ai
     description: Staging — use for testing your integration before going live
   - url: https://api.hyrefast.ai
@@ -2458,7 +2451,7 @@ paths:
                   url: https://api.yourats.com/hooks/hyrefast-v2
       responses:
         '200':
-          description: 'Webhook updated successfully, or `status: RECORD_NOT_FOUND` (still `HTTP 200`) if `webhookId` doesn''t exist in your workspace.'
+          description: "Webhook updated successfully, or `status: RECORD_NOT_FOUND` (still `HTTP 200`) if `webhookId` doesn't exist in your workspace."
           content:
             application/json:
               schema:
@@ -2528,7 +2521,7 @@ paths:
         - $ref: '#/components/parameters/WebhookId'
       responses:
         '200':
-          description: 'Webhook deleted successfully, or `status: RECORD_NOT_FOUND` (still `HTTP 200`) if `webhookId` doesn''t exist in your workspace.'
+          description: "Webhook deleted successfully, or `status: RECORD_NOT_FOUND` (still `HTTP 200`) if `webhookId` doesn't exist in your workspace."
           content:
             application/json:
               schema:
