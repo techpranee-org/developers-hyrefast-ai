@@ -719,6 +719,102 @@ components:
               items:
                 $ref: '#/components/schemas/SkillItem'
 
+    SkillsGenerationJob:
+      type: object
+      properties:
+        jobId:
+          type: string
+          description: |
+            ID of this generation run - not the job's own ID. Pass it to
+            `GET /jobs/skills/generate/status/{jobId}` to poll it.
+          example: 8f14e45f-ceea-467e-bd3f-e0e3e4a5b7c1
+        status:
+          type: string
+          enum: [queued, processing, succeeded, failed]
+          example: queued
+        pollAfterMs:
+          type: integer
+          description: Suggested delay, in milliseconds, before your first status poll.
+          example: 2000
+
+    SkillsGenerationResult:
+      type: object
+      description: Populated on the status response once generation has `succeeded`.
+      properties:
+        jobId:
+          type: string
+          description: ID of the job the skills were generated for (its own ID, not the generation run's).
+          example: job_abc123
+        job_title:
+          type: string
+          example: Senior Python Developer
+        structured_extraction:
+          type: object
+          properties:
+            must_have_skills:
+              type: array
+              items:
+                $ref: '#/components/schemas/SkillItem'
+            good_to_have_skills:
+              type: array
+              items:
+                $ref: '#/components/schemas/SkillItem'
+            bonus_skills:
+              type: array
+              items:
+                $ref: '#/components/schemas/SkillItem'
+        skillsSavedAt:
+          type: string
+          format: date-time
+
+    SkillsGenerationStatus:
+      type: object
+      properties:
+        jobId:
+          type: string
+          description: ID of this generation run.
+          example: 8f14e45f-ceea-467e-bd3f-e0e3e4a5b7c1
+        status:
+          type: string
+          enum: [queued, processing, succeeded, failed]
+          example: succeeded
+        stage:
+          type: string
+          nullable: true
+          example: completed
+        message:
+          type: string
+          nullable: true
+          example: Skill extraction completed.
+        pollAfterMs:
+          type: integer
+          description: Suggested delay, in milliseconds, before your next status poll.
+          example: 2000
+        error:
+          type: string
+          nullable: true
+          description: Populated only when `status` is `failed`.
+        result:
+          nullable: true
+          description: |
+            Populated once `status` is `succeeded`; `null` while `queued`/`processing`, and on `failed`.
+            The generated skills are also written directly to the job's `jd_structured_skills` field, so
+            you can alternatively re-fetch the job instead of reading this.
+          allOf:
+            - $ref: '#/components/schemas/SkillsGenerationResult'
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+
     JobQuestionsData:
       type: object
       properties:
@@ -1748,6 +1844,197 @@ paths:
                 f"{BASE_URL}/external/api/v1/jobs/{JOB_ID}/skills",
                 headers={"X-API-Key": API_KEY},
                 json={"must_have_skills": [{"skill_name": "Node.js"}]},
+            )
+            data = response.json()["data"]
+
+  # ── 4a. Generate Job Skills ───────────────────
+  /external/api/v1/jobs/{jobId}/skills/generate:
+    post:
+      operationId: generateJobSkills
+      tags: [Jobs]
+      summary: Generate job skills
+      description: |
+        Triggers Hyrefast's automatic skill-generation AI to extract must-have / good-to-have / bonus
+        skills for this job from its title and description - the same engine behind the skills suggestions
+        in the Hyrefast app. This is a **separate action from `PUT /jobs/{jobId}/skills`**: that endpoint
+        sets skills you provide yourself; this one generates them and writes the result to the job's
+        `jd_structured_skills` automatically, overwriting whatever was there before.
+
+        Generation runs asynchronously and typically takes anywhere from several seconds to a couple of
+        minutes. This call returns immediately with a `jobId` identifying the run - poll
+        [`GET /jobs/skills/generate/status/{jobId}`](#tag/Jobs/operation/getJobSkillsGenerationStatus) with
+        it to check progress and retrieve the result once it succeeds.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Skill generation started.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SkillsGenerationJob'
+              examples:
+                success:
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      jobId: 8f14e45f-ceea-467e-bd3f-e0e3e4a5b7c1
+                      status: queued
+                      pollAfterMs: 2000
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X POST "https://api.hyrefast.ai/external/api/v1/jobs/job_abc123/skills/generate" \
+              -H "X-API-Key: YOUR_API_KEY"
+        - lang: JavaScript
+          source: |
+            const response = await fetch(
+              `${BASE_URL}/external/api/v1/jobs/${JOB_ID}/skills/generate`,
+              {
+                method: 'POST',
+                headers: { 'X-API-Key': API_KEY },
+              },
+            );
+            const { data } = await response.json();
+            // data.jobId -> poll GET /jobs/skills/generate/status/{jobId}
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.post(
+                f"{BASE_URL}/external/api/v1/jobs/{JOB_ID}/skills/generate",
+                headers={"X-API-Key": API_KEY},
+            )
+            data = response.json()["data"]
+            # data["jobId"] -> poll GET /jobs/skills/generate/status/{jobId}
+
+  # ── 4b. Get Job Skills Generation Status ──────
+  /external/api/v1/jobs/skills/generate/status/{jobId}:
+    get:
+      operationId: getJobSkillsGenerationStatus
+      tags: [Jobs]
+      summary: Get job skills generation status
+      description: |
+        Polls the status of a skill-generation run started by
+        [`POST /jobs/{jobId}/skills/generate`](#tag/Jobs/operation/generateJobSkills). Use the returned
+        `pollAfterMs` as the delay before your next poll.
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: |
+            ID of the generation run, as returned in `jobId` by `POST /jobs/{jobId}/skills/generate` -
+            not the job's own ID.
+          example: 8f14e45f-ceea-467e-bd3f-e0e3e4a5b7c1
+      responses:
+        '200':
+          description: Current status of the generation run.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SkillsGenerationStatus'
+              examples:
+                succeeded:
+                  summary: Succeeded
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      jobId: 8f14e45f-ceea-467e-bd3f-e0e3e4a5b7c1
+                      status: succeeded
+                      stage: completed
+                      message: Skill extraction completed.
+                      pollAfterMs: 2000
+                      error: null
+                      result:
+                        jobId: job_abc123
+                        job_title: Senior Python Developer
+                        structured_extraction:
+                          must_have_skills:
+                            - skill_name: Python
+                              proficiency: L4
+                          good_to_have_skills:
+                            - skill_name: AWS
+                              proficiency: L2
+                          bonus_skills: []
+                        skillsSavedAt: 2026-08-01T10:02:30Z
+                      createdAt: 2026-08-01T10:00:00Z
+                      startedAt: 2026-08-01T10:00:01Z
+                      completedAt: 2026-08-01T10:02:30Z
+                queued:
+                  summary: Still queued
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      jobId: 8f14e45f-ceea-467e-bd3f-e0e3e4a5b7c1
+                      status: queued
+                      stage: queued
+                      message: Queued for skill extraction.
+                      pollAfterMs: 2000
+                      error: null
+                      result: null
+                      createdAt: 2026-08-01T10:00:00Z
+                      startedAt: null
+                      completedAt: null
+        '404':
+          description: The referenced generation `jobId` doesn't exist, or has expired (runs are retained for 30 minutes after completion).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotFoundEnvelope'
+        '403':
+          description: The referenced generation run belongs to a different workspace than your API key's.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnauthorizedEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X GET "https://api.hyrefast.ai/external/api/v1/jobs/skills/generate/status/8f14e45f-ceea-467e-bd3f-e0e3e4a5b7c1" \
+              -H "X-API-Key: YOUR_API_KEY"
+        - lang: JavaScript
+          source: |
+            const response = await fetch(
+              `${BASE_URL}/external/api/v1/jobs/skills/generate/status/${RUN_ID}`,
+              { headers: { 'X-API-Key': API_KEY } },
+            );
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.get(
+                f"{BASE_URL}/external/api/v1/jobs/skills/generate/status/{RUN_ID}",
+                headers={"X-API-Key": API_KEY},
             )
             data = response.json()["data"]
 
