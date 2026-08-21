@@ -400,17 +400,17 @@ components:
       type: object
       required: [title]
       description: |
-        Creates the job as a **draft**. Add skills and an interview configuration, then publish it separately.
-        Only the listed fields are editable via this API — any other field is rejected with `422`.
+        Creates the job as a **draft**, generating its description from `title` using Hyrefast's AI. Add
+        skills and an interview configuration, then publish it separately. Only the listed fields are
+        editable via this API — any other field is rejected with `422`. `description` cannot be set
+        directly; it's always generated. To create a job from a JD document or URL instead — with the
+        description (and other basic details) extracted rather than generated — use
+        [`POST /jobs/create-from-jd`](#tag/Jobs/operation/createJobFromJd).
       properties:
         title:
           type: string
-          description: Job title.
+          description: Job title. The job description is generated from this.
           example: Senior Python Developer
-        description:
-          type: string
-          description: Job description / requirements.
-          example: We are looking for an experienced Python developer with strong backend skills.
         location:
           description: A single location, or an array for multi-city postings.
           oneOf:
@@ -446,12 +446,23 @@ components:
           format: date
           description: Application deadline, as `YYYY-MM-DD`.
           example: '2026-09-15'
+
+    CreateJobFromJdRequest:
+      type: object
+      required: [jd_doc]
+      description: |
+        Creates the job as a **draft**, extracting its title, description, and other basic details from
+        `jd_doc`. Add skills and an interview configuration, then publish it separately. `jd_doc` is the
+        only accepted field — every other field is rejected with `422`, since all job details come from
+        the extraction. To create a job from a title instead — with the description generated rather than
+        extracted — use [`POST /jobs/create`](#tag/Jobs/operation/createJob).
+      properties:
         jd_doc:
           type: string
           format: uri
           description: |
-            URL of the job description document, obtained from
-            `POST /documents/upload` (`type: "jd"`).
+            URL of the job description to extract from - either a document URL obtained from
+            `POST /documents/upload` (`type: "jd"`), or a public JD posting URL.
           example: https://your-bucket.s3.amazonaws.com/workspaces/w1/external-uploads/jd/1699999999-a1b2c3.pdf
 
     UpdateJobRequest:
@@ -1181,7 +1192,7 @@ paths:
       description: |
         Uploads a resume or job description file to Hyrefast's S3 bucket and returns its URL. Use that
         URL as `resume` on [`POST /applications/create`](#tag/Applications/operation/createApplication)
-        or as `jd_doc` on [`POST /jobs/create`](#tag/Jobs/operation/createJob).
+        or as `jd_doc` on [`POST /jobs/create-from-jd`](#tag/Jobs/operation/createJobFromJd).
 
         Accepts PDF, DOC, and DOCX files up to 10MB, sent as `multipart/form-data`.
       requestBody:
@@ -1275,8 +1286,11 @@ paths:
     post:
       operationId: createJob
       tags: [Jobs]
-      summary: Create a job
-      description: Creates a new **draft** job in the workspace associated with your API key.
+      summary: Create a job from a title
+      description: |
+        Creates a new **draft** job in the workspace associated with your API key, generating its
+        description from `title` with Hyrefast's AI. To create from a JD document or URL instead, use
+        [`POST /jobs/create-from-jd`](#tag/Jobs/operation/createJobFromJd).
       requestBody:
         required: true
         content:
@@ -1288,7 +1302,6 @@ paths:
                 summary: Full example
                 value:
                   title: Senior Python Developer
-                  description: We are looking for an experienced Python developer with strong backend skills.
                   location: Bangalore, India
                   employment_type: Full-time
                   work_mode: Remote
@@ -1297,18 +1310,9 @@ paths:
                   salary_min: '1000000'
                   salary_max: '1500000'
                   last_date: '2026-09-15'
-                  jd_doc: ''
-              with_jd_document:
-                summary: With a JD document attached
-                description: |
-                  Upload the JD file first via `POST /documents/upload` (`type: "jd"`), then pass the
-                  returned URL as `jd_doc` here.
-                value:
-                  title: Senior Python Developer
-                  jd_doc: https://your-bucket.s3.amazonaws.com/workspaces/w1/external-uploads/jd/1699999999-a1b2c3.pdf
       responses:
         '200':
-          description: Job created successfully (as a draft).
+          description: Job created successfully (as a draft), with an AI-generated description.
           content:
             application/json:
               schema:
@@ -1330,7 +1334,7 @@ paths:
                       status: draft
                       createdAt: 2026-08-01T10:00:00Z
         '422':
-          description: Validation error — missing or invalid job fields.
+          description: Validation error — missing or invalid job fields, or description generation failed.
           content:
             application/json:
               schema:
@@ -1349,7 +1353,6 @@ paths:
               -H "Content-Type: application/json" \
               -d '{
                 "title": "Senior Python Developer",
-                "description": "We are looking for...",
                 "employment_type": "Full-time",
                 "location": "Bangalore, India"
               }'
@@ -1363,7 +1366,6 @@ paths:
               },
               body: JSON.stringify({
                 title: 'Senior Python Developer',
-                description: 'We are looking for...',
                 employment_type: 'Full-time',
                 location: 'Bangalore, India',
               }),
@@ -1378,9 +1380,108 @@ paths:
                 headers={"X-API-Key": API_KEY},
                 json={
                     "title": "Senior Python Developer",
-                    "description": "We are looking for...",
                     "employment_type": "Full-time",
                     "location": "Bangalore, India",
+                },
+            )
+            data = response.json()["data"]
+
+  # ── 1b. Create Job From JD ───────────────────
+  /external/api/v1/jobs/create-from-jd:
+    post:
+      operationId: createJobFromJd
+      tags: [Jobs]
+      summary: Create a job from a JD URL
+      description: |
+        Creates a new **draft** job in the workspace associated with your API key, extracting its title,
+        description, and other basic details from `jd_doc`. `jd_doc` is the only accepted field. To
+        create from a title instead, use [`POST /jobs/create`](#tag/Jobs/operation/createJob).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateJobFromJdRequest'
+            examples:
+              with_uploaded_document:
+                summary: With an uploaded JD document
+                description: |
+                  Upload the JD file first via `POST /documents/upload` (`type: "jd"`), then pass the
+                  returned URL as `jd_doc` here.
+                value:
+                  jd_doc: https://your-bucket.s3.amazonaws.com/workspaces/w1/external-uploads/jd/1699999999-a1b2c3.pdf
+              with_posting_url:
+                summary: With a public JD posting URL
+                value:
+                  jd_doc: https://boards.example.com/jobs/senior-python-developer
+      responses:
+        '200':
+          description: Job created successfully (as a draft), with an extracted description.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/JobData'
+              examples:
+                success:
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      id: job_abc123
+                      title: Senior Python Developer
+                      publicationStatus: draft
+                      status: draft
+                      createdAt: 2026-08-01T10:00:00Z
+        '422':
+          description: |
+            Validation error — missing/invalid job fields, or `jd_doc` couldn't be fetched or didn't
+            contain enough text to extract a job description from.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X POST "https://api.hyrefast.ai/external/api/v1/jobs/create-from-jd" \
+              -H "X-API-Key: YOUR_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "jd_doc": "https://your-bucket.s3.amazonaws.com/workspaces/w1/external-uploads/jd/1699999999-a1b2c3.pdf"
+              }'
+        - lang: JavaScript
+          source: |
+            const response = await fetch(`${BASE_URL}/external/api/v1/jobs/create-from-jd`, {
+              method: 'POST',
+              headers: {
+                'X-API-Key': API_KEY,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                jd_doc: 'https://your-bucket.s3.amazonaws.com/workspaces/w1/external-uploads/jd/1699999999-a1b2c3.pdf',
+              }),
+            });
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.post(
+                f"{BASE_URL}/external/api/v1/jobs/create-from-jd",
+                headers={"X-API-Key": API_KEY},
+                json={
+                    "jd_doc": "https://your-bucket.s3.amazonaws.com/workspaces/w1/external-uploads/jd/1699999999-a1b2c3.pdf",
                 },
             )
             data = response.json()["data"]
