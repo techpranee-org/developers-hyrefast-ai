@@ -162,46 +162,6 @@ components:
 
     # ── Shared building blocks ──────────────────
 
-    ListRequestBody:
-      type: object
-      description: |
-        Same shape across every list endpoint: `query` is a Mongo-style filter, `options` controls
-        pagination/sorting/projection. Every query is scoped to your workspace regardless of what you
-        send — you cannot read another workspace's data through this endpoint.
-      properties:
-        query:
-          type: object
-          description: Mongo-style filter object. Field names match the resource's data model.
-          additionalProperties: true
-        options:
-          type: object
-          properties:
-            page:
-              type: integer
-              default: 1
-              example: 1
-            limit:
-              type: integer
-              default: 20
-              maximum: 100
-              description: Capped at 100 regardless of what you request.
-              example: 20
-            sort:
-              type: object
-              additionalProperties: true
-              example: { createdAt: -1 }
-            select:
-              description: Fields to project — space-separated string or array of field names.
-              oneOf:
-                - type: string
-                - type: array
-                  items:
-                    type: string
-        isCountOnly:
-          type: boolean
-          description: 'If `true`, returns `{ "totalRecords": N }` instead of the paginated list.'
-          example: false
-
     ListJobsRequestBody:
       type: object
       description: |
@@ -405,7 +365,7 @@ components:
         editable via this API — any other field is rejected with `422`. `description` cannot be set
         directly; it's always generated. To create a job from a JD document or URL instead — with the
         description (and other basic details) extracted rather than generated — use
-        [`POST /jobs/create-from-jd`](#tag/Jobs/operation/createJobFromJd).
+        [`POST /jobs/create-from-jd`](#tag/Job-Creation/operation/createJobFromJd).
       properties:
         title:
           type: string
@@ -455,13 +415,13 @@ components:
         `jd_doc`. Add skills and an interview configuration, then publish it separately. `jd_doc` is the
         only accepted field — every other field is rejected with `422`, since all job details come from
         the extraction. To create a job from a title instead — with the description generated rather than
-        extracted — use [`POST /jobs/create`](#tag/Jobs/operation/createJob).
+        extracted — use [`POST /jobs/create`](#tag/Job-Creation/operation/createJob).
       properties:
         jd_doc:
           type: string
           format: uri
           description: |
-            URL of the job description to extract from - either a document URL obtained from
+            URL of the job description to extract from — either a document URL obtained from
             `POST /documents/upload` (`type: "jd"`), or a public JD posting URL.
           example: https://your-bucket.s3.amazonaws.com/workspaces/w1/external-uploads/jd/1699999999-a1b2c3.pdf
 
@@ -742,7 +702,7 @@ components:
         jobId:
           type: string
           description: |
-            ID of this generation run - not the job's own ID. Pass it to
+            ID of this generation run — not the job's own ID. Pass it to
             `GET /jobs/skills/generate/status/{jobId}` to poll it.
           example: 8f14e45f-ceea-467e-bd3f-e0e3e4a5b7c1
         status:
@@ -854,7 +814,7 @@ components:
         jobId:
           type: string
           description: |
-            ID of this generation run - not the job's own ID. Pass it to
+            ID of this generation run — not the job's own ID. Pass it to
             `GET /jobs/questions/generate/status/{jobId}` to poll it.
           example: 3c2f9d6a-1b4e-4f8a-9c3d-2e5f7a8b9c0d
         status:
@@ -870,7 +830,7 @@ components:
       type: object
       description: |
         Populated on the status response once generation has `succeeded`. Unlike skill generation, this
-        result is **not** saved anywhere automatically - to keep these questions, pass `questions` to
+        result is **not** saved anywhere automatically — to keep these questions, pass `questions` to
         `PUT /jobs/{jobId}/questions` yourself.
       properties:
         questions:
@@ -878,7 +838,7 @@ components:
           items:
             $ref: '#/components/schemas/QuestionItem'
           description: |
-            Generated questions. `order` and `question_type` aren't populated by generation - if you persist
+            Generated questions. `order` and `question_type` aren't populated by generation — if you persist
             this list via `PUT /jobs/{jobId}/questions`, set `order` from each item's array index first, or
             every item will default to `order: 1` there.
         skillCoverageReport:
@@ -987,7 +947,7 @@ components:
         jobId:
           type: string
           description: |
-            ID of this generation run - not the job's own ID. Pass it to
+            ID of this generation run — not the job's own ID. Pass it to
             `GET /jobs/topics/generate/status/{jobId}` to poll it.
           example: 5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b
         status:
@@ -1003,7 +963,7 @@ components:
       type: object
       description: |
         Populated on the status response once generation has `succeeded`. Unlike skill generation, this
-        result is **not** saved anywhere automatically - to keep these topics, pass `topicsToFocus` to
+        result is **not** saved anywhere automatically — to keep these topics, pass `topicsToFocus` to
         `PUT /jobs/{jobId}/topics` yourself.
       properties:
         topicsToFocus:
@@ -1011,7 +971,7 @@ components:
           items:
             $ref: '#/components/schemas/TopicItem'
           description: |
-            Normalized topics, parsed server-side from the AI's response - already shaped for
+            Normalized topics, parsed server-side from the AI's response — already shaped for
             `PUT /jobs/{jobId}/topics`.
 
     TopicsGenerationStatus:
@@ -1334,8 +1294,26 @@ tags:
     description: |
       Upload resume and job description files ahead of creating an application or job, then reference
       the returned URL in the create call.
-  - name: Jobs
-    description: Create and manage job postings in your workspace.
+  - name: Job Creation
+    description: |
+      Create a job as a draft, either from a title (Hyrefast generates the description) or from a JD
+      document/URL (Hyrefast extracts it). Add skills, questions or topics, then publish separately.
+  - name: Skills
+    description: |
+      Set or generate the must-have, good-to-have, and bonus skills for a job. At least one must-have
+      skill is required before the job can be published.
+  - name: Questions
+    description: Set or generate the interview question bank for a job.
+  - name: Topics
+    description: |
+      Set or generate the focus/avoid discussion topics for a job. At least one topic is required
+      before conversation-mode interviews can be enabled.
+  - name: Publishing
+    description: Publish a job once it has at least one must-have skill. Questions and topics are optional.
+  - name: Conversation Mode
+    description: Enable or disable conversation-mode interviews for a job.
+  - name: Job Management
+    description: List, update, and delete jobs in your workspace.
   - name: Applications
     description: Submit and manage candidate applications against existing jobs.
   - name: Interviews
@@ -1493,7 +1471,7 @@ paths:
       description: |
         Uploads a resume or job description file to Hyrefast's S3 bucket and returns its URL. Use that
         URL as `resume` on [`POST /applications/create`](#tag/Applications/operation/createApplication)
-        or as `jd_doc` on [`POST /jobs/create-from-jd`](#tag/Jobs/operation/createJobFromJd).
+        or as `jd_doc` on [`POST /jobs/create-from-jd`](#tag/Job-Creation/operation/createJobFromJd).
 
         Accepts PDF, DOC, and DOCX files up to 10MB, sent as `multipart/form-data`.
       requestBody:
@@ -1511,7 +1489,7 @@ paths:
                 type:
                   type: string
                   enum: [resume, jd]
-                  description: What kind of document this is - determines where it's stored.
+                  description: What kind of document this is — determines where it's stored.
       responses:
         '200':
           description: File uploaded successfully.
@@ -1586,12 +1564,12 @@ paths:
   /external/api/v1/jobs/create:
     post:
       operationId: createJob
-      tags: [Jobs]
-      summary: Create a job from a title
+      tags: [Job Creation]
+      summary: Create from a title
       description: |
         Creates a new **draft** job in the workspace associated with your API key, generating its
         description from `title` with Hyrefast's AI. To create from a JD document or URL instead, use
-        [`POST /jobs/create-from-jd`](#tag/Jobs/operation/createJobFromJd).
+        [`POST /jobs/create-from-jd`](#tag/Job-Creation/operation/createJobFromJd).
       requestBody:
         required: true
         content:
@@ -1691,12 +1669,12 @@ paths:
   /external/api/v1/jobs/create-from-jd:
     post:
       operationId: createJobFromJd
-      tags: [Jobs]
-      summary: Create a job from a JD URL
+      tags: [Job Creation]
+      summary: Create from a JD
       description: |
         Creates a new **draft** job in the workspace associated with your API key, extracting its title,
         description, and other basic details from `jd_doc`. `jd_doc` is the only accepted field. To
-        create from a title instead, use [`POST /jobs/create`](#tag/Jobs/operation/createJob).
+        create from a title instead, use [`POST /jobs/create`](#tag/Job-Creation/operation/createJob).
       requestBody:
         required: true
         content:
@@ -1791,7 +1769,7 @@ paths:
   /external/api/v1/jobs/list:
     post:
       operationId: listJobs
-      tags: [Jobs]
+      tags: [Job Management]
       summary: List jobs
       description: |
         Paginated list of jobs owned by your workspace, most recent first. Filterable only by `status`,
@@ -1901,8 +1879,8 @@ paths:
   /external/api/v1/jobs/partial-update/{jobId}:
     put:
       operationId: updateJob
-      tags: [Jobs]
-      summary: Update job
+      tags: [Job Management]
+      summary: Update job details
       description: |
         Updates an existing job. Skills and interview configuration are updated
         through their own endpoints.
@@ -1977,8 +1955,8 @@ paths:
   /external/api/v1/jobs/{jobId}/skills:
     put:
       operationId: updateJobSkills
-      tags: [Jobs]
-      summary: Update job skills
+      tags: [Skills]
+      summary: Set skills
       description: Sets (full replace) the must-have / good-to-have / bonus skill buckets for a job.
       parameters:
         - $ref: '#/components/parameters/JobId'
@@ -2056,18 +2034,18 @@ paths:
   /external/api/v1/jobs/{jobId}/skills/generate:
     post:
       operationId: generateJobSkills
-      tags: [Jobs]
-      summary: Generate job skills
+      tags: [Skills]
+      summary: Generate skills
       description: |
         Triggers Hyrefast's automatic skill-generation AI to extract must-have / good-to-have / bonus
-        skills for this job from its title and description - the same engine behind the skills suggestions
+        skills for this job from its title and description — the same engine behind the skills suggestions
         in the Hyrefast app. This is a **separate action from `PUT /jobs/{jobId}/skills`**: that endpoint
         sets skills you provide yourself; this one generates them and writes the result to the job's
         `jd_structured_skills` automatically, overwriting whatever was there before.
 
         Generation runs asynchronously and typically takes anywhere from several seconds to a couple of
-        minutes. This call returns immediately with a `jobId` identifying the run - poll
-        [`GET /jobs/skills/generate/status/{jobId}`](#tag/Jobs/operation/getJobSkillsGenerationStatus) with
+        minutes. This call returns immediately with a `jobId` identifying the run — poll
+        [`GET /jobs/skills/generate/status/{jobId}`](#tag/Skills/operation/getJobSkillsGenerationStatus) with
         it to check progress and retrieve the result once it succeeds.
       parameters:
         - $ref: '#/components/parameters/JobId'
@@ -2131,11 +2109,11 @@ paths:
   /external/api/v1/jobs/skills/generate/status/{jobId}:
     get:
       operationId: getJobSkillsGenerationStatus
-      tags: [Jobs]
-      summary: Get job skills generation status
+      tags: [Skills]
+      summary: Get skills generation status
       description: |
         Polls the status of a skill-generation run started by
-        [`POST /jobs/{jobId}/skills/generate`](#tag/Jobs/operation/generateJobSkills). Use the returned
+        [`POST /jobs/{jobId}/skills/generate`](#tag/Skills/operation/generateJobSkills). Use the returned
         `pollAfterMs` as the delay before your next poll.
       parameters:
         - name: jobId
@@ -2144,7 +2122,7 @@ paths:
           schema:
             type: string
           description: |
-            ID of the generation run, as returned in `jobId` by `POST /jobs/{jobId}/skills/generate` -
+            ID of the generation run, as returned in `jobId` by `POST /jobs/{jobId}/skills/generate` —
             not the job's own ID.
           example: 8f14e45f-ceea-467e-bd3f-e0e3e4a5b7c1
       responses:
@@ -2247,8 +2225,8 @@ paths:
   /external/api/v1/jobs/{jobId}/questions:
     put:
       operationId: updateJobQuestions
-      tags: [Jobs]
-      summary: Update job questions
+      tags: [Questions]
+      summary: Set questions
       description: |
         Sets (full replace) the job's interview question bank. Existing question documents referenced by
         past applications are left intact — only the job's pointer to them changes. Send an empty array to
@@ -2330,22 +2308,22 @@ paths:
   /external/api/v1/jobs/{jobId}/questions/generate:
     post:
       operationId: generateJobQuestions
-      tags: [Jobs]
-      summary: Generate job questions
+      tags: [Questions]
+      summary: Generate questions
       description: |
         Triggers Hyrefast's automatic interview-question-generation AI, using this job's title,
         description, and accepted skills (from `PUT /jobs/{jobId}/skills` or
-        [`POST /jobs/{jobId}/skills/generate`](#tag/Jobs/operation/generateJobSkills)) to produce a set of
+        [`POST /jobs/{jobId}/skills/generate`](#tag/Skills/operation/generateJobSkills)) to produce a set of
         interview questions.
 
         Unlike skill generation, this is **generation-only** — the result is not written back to the job
         automatically. To keep the generated questions, pass them to
-        [`PUT /jobs/{jobId}/questions`](#tag/Jobs/operation/updateJobQuestions) yourself once generation
+        [`PUT /jobs/{jobId}/questions`](#tag/Questions/operation/updateJobQuestions) yourself once generation
         succeeds.
 
         Generation runs asynchronously and typically takes anywhere from several seconds to a couple of
-        minutes. This call returns immediately with a `jobId` identifying the run - poll
-        [`GET /jobs/questions/generate/status/{jobId}`](#tag/Jobs/operation/getJobQuestionsGenerationStatus)
+        minutes. This call returns immediately with a `jobId` identifying the run — poll
+        [`GET /jobs/questions/generate/status/{jobId}`](#tag/Questions/operation/getJobQuestionsGenerationStatus)
         with it to check progress and retrieve the result once it succeeds.
       parameters:
         - $ref: '#/components/parameters/JobId'
@@ -2409,11 +2387,11 @@ paths:
   /external/api/v1/jobs/questions/generate/status/{jobId}:
     get:
       operationId: getJobQuestionsGenerationStatus
-      tags: [Jobs]
-      summary: Get job questions generation status
+      tags: [Questions]
+      summary: Get questions generation status
       description: |
         Polls the status of a question-generation run started by
-        [`POST /jobs/{jobId}/questions/generate`](#tag/Jobs/operation/generateJobQuestions). Use the
+        [`POST /jobs/{jobId}/questions/generate`](#tag/Questions/operation/generateJobQuestions). Use the
         returned `pollAfterMs` as the delay before your next poll.
       parameters:
         - name: jobId
@@ -2422,7 +2400,7 @@ paths:
           schema:
             type: string
           description: |
-            ID of the generation run, as returned in `jobId` by `POST /jobs/{jobId}/questions/generate` -
+            ID of the generation run, as returned in `jobId` by `POST /jobs/{jobId}/questions/generate` —
             not the job's own ID.
           example: 3c2f9d6a-1b4e-4f8a-9c3d-2e5f7a8b9c0d
       responses:
@@ -2531,8 +2509,8 @@ paths:
   /external/api/v1/jobs/{jobId}/topics:
     put:
       operationId: updateJobTopics
-      tags: [Jobs]
-      summary: Update job topics
+      tags: [Topics]
+      summary: Set topics
       description: |
         Sets (full replace) the job's focus/avoid discussion-topic guidance. Send both properties if you
         want to keep existing values in one of them — an omitted property is cleared, not left unchanged.
@@ -2613,21 +2591,21 @@ paths:
   /external/api/v1/jobs/{jobId}/topics/generate:
     post:
       operationId: generateJobTopics
-      tags: [Jobs]
-      summary: Generate job topics
+      tags: [Topics]
+      summary: Generate topics
       description: |
         Triggers Hyrefast's automatic topic-generation AI, clustering this job's accepted skills (from
         `PUT /jobs/{jobId}/skills` or
-        [`POST /jobs/{jobId}/skills/generate`](#tag/Jobs/operation/generateJobSkills)) into logical interview
+        [`POST /jobs/{jobId}/skills/generate`](#tag/Skills/operation/generateJobSkills)) into logical interview
         discussion topics.
 
         Like question generation, this is **generation-only** — the result is not written back to the job
         automatically. To keep the generated topics, pass them to
-        [`PUT /jobs/{jobId}/topics`](#tag/Jobs/operation/updateJobTopics) yourself once generation succeeds.
+        [`PUT /jobs/{jobId}/topics`](#tag/Topics/operation/updateJobTopics) yourself once generation succeeds.
 
         Generation runs asynchronously and typically takes anywhere from several seconds to a couple of
-        minutes. This call returns immediately with a `jobId` identifying the run - poll
-        [`GET /jobs/topics/generate/status/{jobId}`](#tag/Jobs/operation/getJobTopicsGenerationStatus) with
+        minutes. This call returns immediately with a `jobId` identifying the run — poll
+        [`GET /jobs/topics/generate/status/{jobId}`](#tag/Topics/operation/getJobTopicsGenerationStatus) with
         it to check progress and retrieve the result once it succeeds.
       parameters:
         - $ref: '#/components/parameters/JobId'
@@ -2691,16 +2669,16 @@ paths:
   /external/api/v1/jobs/topics/generate/status/{jobId}:
     get:
       operationId: getJobTopicsGenerationStatus
-      tags: [Jobs]
-      summary: Get job topics generation status
+      tags: [Topics]
+      summary: Get topics generation status
       description: |
         Polls the status of a topic-generation run started by
-        [`POST /jobs/{jobId}/topics/generate`](#tag/Jobs/operation/generateJobTopics). Use the returned
+        [`POST /jobs/{jobId}/topics/generate`](#tag/Topics/operation/generateJobTopics). Use the returned
         `pollAfterMs` as the delay before your next poll.
 
         Unlike the equivalent internal endpoint (which returns the AI's raw text response), `result` here
         is normalized server-side into `topicsToFocus` items shaped exactly like
-        [`PUT /jobs/{jobId}/topics`](#tag/Jobs/operation/updateJobTopics) expects - no client-side parsing
+        [`PUT /jobs/{jobId}/topics`](#tag/Topics/operation/updateJobTopics) expects — no client-side parsing
         needed.
       parameters:
         - name: jobId
@@ -2709,7 +2687,7 @@ paths:
           schema:
             type: string
           description: |
-            ID of the generation run, as returned in `jobId` by `POST /jobs/{jobId}/topics/generate` - not
+            ID of the generation run, as returned in `jobId` by `POST /jobs/{jobId}/topics/generate` — not
             the job's own ID.
           example: 5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b
       responses:
@@ -2809,12 +2787,13 @@ paths:
   /external/api/v1/jobs/{jobId}/publish:
     post:
       operationId: publishJob
-      tags: [Jobs]
+      tags: [Publishing]
       summary: Publish job
       description: |
-        Attempts to publish a job. Validates the job has the required information first — a title,
-        description, location, at least one must-have skill, and at least one interview question or
-        topic. If anything is missing, returns `422` with details instead of publishing.
+        Attempts to publish a job. Validates the job has at least one must-have skill first (via
+        `PUT /jobs/{jobId}/skills` or
+        [`POST /jobs/{jobId}/skills/generate`](#tag/Skills/operation/generateJobSkills)) — questions and
+        topics are optional. If no must-have skill is set, returns `422` with details instead of publishing.
       parameters:
         - $ref: '#/components/parameters/JobId'
       responses:
@@ -2857,16 +2836,16 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '422':
-          description: Job is missing required information — `message` lists what's missing.
+          description: Job has no must-have skill — `message` lists what's missing.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ValidationErrorEnvelope'
               examples:
-                missing_fields:
+                missing_skills:
                   value:
                     status: VALIDATION_ERROR
-                    message: 'Job is not eligible to be published. Missing or invalid: skills - at least one must-have skill (PUT /jobs/:id/skills); interview configuration - at least one question or topic (PUT /jobs/:id/questions or PUT /jobs/:id/topics).'
+                    message: 'Job is not eligible to be published. Missing or invalid: skills - at least one must-have skill (PUT /jobs/:id/skills).'
                     data: null
         '401':
           $ref: '#/components/responses/Unauthorized'
@@ -2900,18 +2879,18 @@ paths:
   /external/api/v1/jobs/{jobId}/conversation-mode/enable:
     post:
       operationId: enableJobConversationMode
-      tags: [Jobs]
-      summary: Enable job conversation mode
+      tags: [Conversation Mode]
+      summary: Enable conversation mode
       description: |
         Enables conversation-mode interviews for a job. Validates the job has at least one topic
         configured first (`topics.topicToFocusIds`, via
-        [`PUT /jobs/{jobId}/topics`](#tag/Jobs/operation/updateJobTopics) or
-        [`POST /jobs/{jobId}/topics/generate`](#tag/Jobs/operation/generateJobTopics)) - conversation mode
+        [`PUT /jobs/{jobId}/topics`](#tag/Topics/operation/updateJobTopics) or
+        [`POST /jobs/{jobId}/topics/generate`](#tag/Topics/operation/generateJobTopics)) — conversation mode
         has nothing to hold a discussion around otherwise. If none are configured, returns `422` instead
         of enabling.
 
         This is a separate action from
-        [disabling conversation mode](#tag/Jobs/operation/disableJobConversationMode) rather than a single
+        [disabling conversation mode](#tag/Conversation-Mode/operation/disableJobConversationMode) rather than a single
         toggle, since only enabling carries this validation.
       parameters:
         - $ref: '#/components/parameters/JobId'
@@ -2998,11 +2977,11 @@ paths:
   /external/api/v1/jobs/{jobId}/conversation-mode/disable:
     post:
       operationId: disableJobConversationMode
-      tags: [Jobs]
-      summary: Disable job conversation mode
+      tags: [Conversation Mode]
+      summary: Disable conversation mode
       description: |
         Disables conversation-mode interviews for a job. Unlike
-        [enabling](#tag/Jobs/operation/enableJobConversationMode), this has no eligibility requirement -
+        [enabling](#tag/Conversation-Mode/operation/enableJobConversationMode), this has no eligibility requirement —
         turning the mode off never needs the preconditions turning it on does.
       parameters:
         - $ref: '#/components/parameters/JobId'
@@ -3077,8 +3056,8 @@ paths:
   /external/api/v1/jobs/softDelete/{jobId}:
     put:
       operationId: softDeleteJob
-      tags: [Jobs]
-      summary: Delete Job
+      tags: [Job Management]
+      summary: Delete job
       description: Deletes a job. It no longer appears in `POST /jobs/list`.
       parameters:
         - $ref: '#/components/parameters/JobId'
@@ -3436,7 +3415,7 @@ paths:
     put:
       operationId: softDeleteApplication
       tags: [Applications]
-      summary: Delete Application
+      summary: Delete application
       description: Deletes an application. It no longer appears in `POST /applications/list`.
       parameters:
         - $ref: '#/components/parameters/ApplicationId'
@@ -3552,7 +3531,7 @@ paths:
     post:
       operationId: generateInterviewLink
       tags: [Interviews]
-      summary: Generate interview link
+      summary: Get interview link
       description: |
         Retrieves the private interview link for an application in your workspace **without** emailing it.
         Useful when you want to deliver it through your own notification channel (e.g. your own email
@@ -3716,7 +3695,7 @@ paths:
     get:
       operationId: getWebhook
       tags: [Webhooks]
-      summary: Get Registered Webhook
+      summary: Get registered webhook
       description: |
         Returns the workspace's registered webhook, if one exists. Each workspace can have at most one
         registered webhook, so this endpoint returns the webhook directly rather than as a paginated
