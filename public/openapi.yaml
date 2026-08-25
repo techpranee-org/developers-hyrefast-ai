@@ -20,8 +20,6 @@ info:
     url: https://hyrefast.ai/terms
 
 servers:
-  - url: http://localhost:6365
-    description: localhost — use for testing your integration before going live
   - url: https://staging-api.hyrefast.ai
     description: Staging — use for testing your integration before going live
   - url: https://api.hyrefast.ai
@@ -2433,7 +2431,8 @@ paths:
                           - title: Describe a time you optimized a slow query.
                             topic_name: Databases
                             question_proficiency: L3
-                            key_aspects_to_be_covered: [indexing, query planning]
+                            key_aspects_to_be_covered:
+                              [indexing, query planning]
                             skills_covered: [SQL]
                         skillCoverageReport: null
                         context:
