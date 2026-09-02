@@ -272,6 +272,26 @@ components:
           description: 'If `true`, returns `{ "totalRecords": N }` instead of the paginated list.'
           example: false
 
+    ListResponsesRequestBody:
+      type: object
+      description: |
+        Pagination only — there is no `query` filter on this endpoint, since it always lists every
+        response for the one application in the URL.
+      properties:
+        options:
+          type: object
+          properties:
+            page:
+              type: integer
+              default: 1
+              example: 1
+            limit:
+              type: integer
+              default: 20
+              maximum: 100
+              description: Capped at 100 regardless of what you request.
+              example: 20
+
     CountOnlyData:
       type: object
       properties:
@@ -1129,6 +1149,122 @@ components:
           description: The candidate's private interview link.
           example: https://hyrefast.ai/interview/ivw_def456?token=abc123
 
+    # ── Response data schemas ───────────────────
+
+    ResponseDurations:
+      type: object
+      nullable: true
+      properties:
+        video_duration:
+          type: number
+          nullable: true
+          description: Seconds.
+          example: 42.5
+        audio_duration:
+          type: number
+          nullable: true
+          description: Seconds.
+          example: 42.5
+        response_latency:
+          type: number
+          nullable: true
+          description: Seconds between the question being shown and the candidate starting to answer.
+          example: 1.2
+        response_onset_latency:
+          type: number
+          nullable: true
+          example: 0.8
+
+    ResponseData:
+      type: object
+      properties:
+        id:
+          type: string
+          example: rsp_ghi012
+        questionNumber:
+          type: integer
+          example: 1
+        questionText:
+          type: string
+          example: Describe a time you optimized a slow query.
+        responseText:
+          type: string
+          description: Text answer, for text-based questions. Empty for audio/video answers.
+        transcriptionStatus:
+          type: string
+          enum:
+            [pending, processing, processing_retry, completed, failed, skipped]
+          description: |
+            Transcription runs asynchronously and can still be in progress after the interview itself is
+            complete — poll this endpoint until it reaches `completed` (or `failed`/`skipped`).
+          example: completed
+        transcriptionMethod:
+          type: string
+          nullable: true
+          enum: [whisper, browser, gemini, skipped, none]
+          example: whisper
+        transcriptionText:
+          type: string
+          nullable: true
+          description: Only populated once `transcriptionStatus` is `completed`; `null` otherwise.
+          example: So there was this one time where the query was taking...
+        responseDuration:
+          type: number
+          nullable: true
+          description: Total seconds spent on this answer.
+          example: 42.5
+        durations:
+          $ref: '#/components/schemas/ResponseDurations'
+        audioUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: |
+            Presigned S3 URL for the recorded audio, **valid for 1 hour** from when you called this
+            endpoint. `null` if no audio was captured for this answer. Re-call this endpoint for a fresh
+            URL once it expires — don't cache it.
+          example: https://your-bucket.s3.amazonaws.com/workspaces/w1/.../audio/final.webm?X-Amz-Signature=...
+        videoUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: |
+            Presigned S3 URL for the recorded video, **valid for 1 hour** from when you called this
+            endpoint. `null` if no video was captured for this answer. Re-call this endpoint for a fresh
+            URL once it expires — don't cache it.
+          example: https://your-bucket.s3.amazonaws.com/workspaces/w1/.../video/final.webm?X-Amz-Signature=...
+        isSkipped:
+          type: boolean
+          example: false
+        createdAt:
+          type: string
+          format: date-time
+          example: 2026-08-20T10:15:00Z
+        updatedAt:
+          type: string
+          format: date-time
+          example: 2026-08-20T10:16:30Z
+
+    ResponseListData:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResponseData'
+        currentPage:
+          type: integer
+          example: 1
+        perPage:
+          type: integer
+          example: 20
+        itemCount:
+          type: integer
+          example: 1
+        pageCount:
+          type: integer
+          example: 1
+
     # ── Webhook request bodies ──────────────────
 
     CreateWebhookRequest:
@@ -1316,6 +1452,10 @@ tags:
     description: Submit and manage candidate applications against existing jobs.
   - name: Interviews
     description: Send or retrieve interview invitation links.
+  - name: Responses
+    description: |
+      Read back a candidate's interview responses once they've completed the interview — the transcript
+      for each question, plus time-limited signed URLs for the recorded audio/video.
   - name: Webhooks
     description: |
       Register a URL to receive real-time event notifications instead of polling. Registration is
@@ -3893,5 +4033,135 @@ paths:
             response = requests.delete(
                 f"{BASE_URL}/external/api/v1/webhook-subscription/{WEBHOOK_ID}",
                 headers={"X-API-Key": API_KEY},
+            )
+            data = response.json()["data"]
+
+  # ── 17. List Responses ────────────────────────
+  /external/api/v1/applications/{applicationId}/responses/list:
+    post:
+      operationId: listResponses
+      tags: [Responses]
+      summary: List responses
+      description: |
+        Paginated list of interview responses (one per interview question) for an application in your
+        workspace, ordered by `questionNumber`. Each item includes the transcript and time-limited signed
+        URLs for the recorded audio/video.
+
+        Transcription runs asynchronously and can still be in progress after the interview itself is
+        complete — poll this endpoint until each item's `transcriptionStatus` reaches `completed` (there
+        is currently no webhook event for transcription completion). `audioUrl`/`videoUrl` are presigned
+        and expire after 1 hour, so re-fetch this endpoint rather than caching them.
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ListResponsesRequestBody'
+            examples:
+              paginated:
+                value:
+                  options: { page: 1, limit: 20 }
+      responses:
+        '200':
+          description: |
+            Responses matched, or an empty result. `data` is a `ResponseListData` object when responses
+            are found, or `null` (with `status: RECORD_NOT_FOUND`) when the application has none yet.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessEnvelope'
+              examples:
+                success:
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      data:
+                        - id: rsp_ghi012
+                          questionNumber: 1
+                          questionText: Describe a time you optimized a slow query.
+                          responseText: ''
+                          transcriptionStatus: completed
+                          transcriptionMethod: whisper
+                          transcriptionText: So there was this one time where the query was taking...
+                          responseDuration: 42.5
+                          durations:
+                            video_duration: 42.5
+                            audio_duration: 42.5
+                            response_latency: 1.2
+                            response_onset_latency: 0.8
+                          audioUrl: https://your-bucket.s3.amazonaws.com/workspaces/w1/.../audio/final.webm?X-Amz-Signature=...
+                          videoUrl: https://your-bucket.s3.amazonaws.com/workspaces/w1/.../video/final.webm?X-Amz-Signature=...
+                          isSkipped: false
+                          createdAt: 2026-08-20T10:15:00Z
+                          updatedAt: 2026-08-20T10:16:30Z
+                      currentPage: 1
+                      perPage: 20
+                      itemCount: 1
+                      pageCount: 1
+                pending_transcription:
+                  summary: Transcription still in progress
+                  value:
+                    status: SUCCESS
+                    message: Your request is successfully executed
+                    data:
+                      data:
+                        - id: rsp_ghi012
+                          questionNumber: 1
+                          questionText: Describe a time you optimized a slow query.
+                          responseText: ''
+                          transcriptionStatus: processing
+                          transcriptionMethod: null
+                          transcriptionText: null
+                          responseDuration: 42.5
+                          audioUrl: https://your-bucket.s3.amazonaws.com/workspaces/w1/.../audio/final.webm?X-Amz-Signature=...
+                          videoUrl: https://your-bucket.s3.amazonaws.com/workspaces/w1/.../video/final.webm?X-Amz-Signature=...
+                          isSkipped: false
+                      currentPage: 1
+                      perPage: 20
+                      itemCount: 1
+                      pageCount: 1
+                empty:
+                  summary: No responses submitted yet for this application
+                  value:
+                    status: RECORD_NOT_FOUND
+                    message: recordNotFound
+                    data: null
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-codeSamples:
+        - lang: cURL
+          source: |
+            curl -X POST "https://api.hyrefast.ai/external/api/v1/applications/app_xyz789/responses/list" \
+              -H "X-API-Key: YOUR_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{ "options": { "page": 1, "limit": 20 } }'
+        - lang: JavaScript
+          source: |
+            const response = await fetch(
+              `${BASE_URL}/external/api/v1/applications/${APPLICATION_ID}/responses/list`,
+              {
+                method: 'POST',
+                headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ options: { page: 1, limit: 20 } }),
+              },
+            );
+            const { data } = await response.json();
+        - lang: Python
+          source: |
+            import requests
+
+            response = requests.post(
+                f"{BASE_URL}/external/api/v1/applications/{APPLICATION_ID}/responses/list",
+                headers={"X-API-Key": API_KEY},
+                json={"options": {"page": 1, "limit": 20}},
             )
             data = response.json()["data"]
